@@ -5,6 +5,7 @@
 ## Version: 1.0
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
+## IconTexture: Interface\AddOns\MidnightCC\icon
 
 MidnightCC.lua
 Options.lua
