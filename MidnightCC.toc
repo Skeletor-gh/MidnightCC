@@ -4,6 +4,7 @@
 ## Author: MidnightCC
 ## Version: 1.0.0
 ## SavedVariables: MidnightCCDB
+## OptionalDeps: LibSharedMedia-3.0
 
 MidnightCC.lua
 Options.lua

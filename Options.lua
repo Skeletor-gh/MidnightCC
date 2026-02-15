@@ -1,16 +1,11 @@
 local addonName = ...
 local Addon = MidnightCC
 
-local function SortedFontNames()
-    local names = {}
-
-    for name in pairs(Addon.availableFonts) do
-        names[#names + 1] = name
-    end
-
-    table.sort(names)
-    return names
-end
+local anchorLabels = {
+    top = "Top",
+    center = "Center",
+    bottom = "Bottom",
+}
 
 function Addon:CreateOptionsPanel()
     if self.optionsPanel then
@@ -45,7 +40,7 @@ function Addon:CreateOptionsPanel()
 
         UIDropDownMenu_SetWidth(dropdown, 220)
         UIDropDownMenu_Initialize(dropdown, function()
-            for _, fontName in ipairs(SortedFontNames()) do
+            for _, fontName in ipairs(Addon:GetSortedFontNames()) do
                 local info = UIDropDownMenu_CreateInfo()
                 info.text = fontName
                 info.checked = (Addon.db.fontName == fontName)
@@ -58,8 +53,30 @@ function Addon:CreateOptionsPanel()
         end)
         UIDropDownMenu_SetSelectedName(dropdown, Addon.db.fontName)
 
+        local anchorLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        anchorLabel:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 16, -24)
+        anchorLabel:SetText("Cooldown anchor")
+
+        local anchorDropdown = CreateFrame("Frame", addonName .. "AnchorDropdown", frame, "UIDropDownMenuTemplate")
+        anchorDropdown:SetPoint("TOPLEFT", anchorLabel, "BOTTOMLEFT", -16, -4)
+
+        UIDropDownMenu_SetWidth(anchorDropdown, 140)
+        UIDropDownMenu_Initialize(anchorDropdown, function()
+            for _, anchor in ipairs({ "top", "center", "bottom" }) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = anchorLabels[anchor]
+                info.checked = (Addon.db.anchor == anchor)
+                info.func = function()
+                    UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[anchor])
+                    Addon:SetAnchor(anchor)
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+        UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[Addon.db.anchor] or anchorLabels.center)
+
         local slider = CreateFrame("Slider", addonName .. "SizeSlider", frame, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 20, -28)
+        slider:SetPoint("TOPLEFT", anchorDropdown, "BOTTOMLEFT", 20, -28)
         slider:SetWidth(280)
         slider:SetMinMaxValues(8, 48)
         slider:SetValueStep(1)
