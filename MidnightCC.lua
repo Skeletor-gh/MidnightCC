@@ -20,6 +20,7 @@ Addon.availableFonts = {
 }
 
 Addon.cooldowns = setmetatable({}, { __mode = "k" })
+Addon.scanThrottleSeconds = 0.2
 
 Addon.anchorPoints = {
     top = "TOP",
@@ -152,6 +153,25 @@ function Addon:ScanCooldownFrames()
     end
 end
 
+function Addon:RequestCooldownScan()
+    if self.scanQueued then
+        return
+    end
+
+    self.scanQueued = true
+
+    if C_Timer and C_Timer.After then
+        C_Timer.After(self.scanThrottleSeconds, function()
+            Addon.scanQueued = false
+            Addon:ScanCooldownFrames()
+        end)
+        return
+    end
+
+    self.scanQueued = false
+    self:ScanCooldownFrames()
+end
+
 function Addon:ApplyToKnownCooldowns()
     for cooldown in pairs(self.cooldowns) do
         self:ApplyToCooldown(cooldown)
@@ -161,6 +181,26 @@ end
 function Addon:RefreshAllCooldowns()
     self:ScanCooldownFrames()
     self:ApplyToKnownCooldowns()
+end
+
+function Addon:HookCooldownAPIs()
+    if self.cooldownHooksInstalled then
+        return
+    end
+
+    self.cooldownHooksInstalled = true
+
+    if CooldownFrame_Set then
+        hooksecurefunc("CooldownFrame_Set", function(cooldown)
+            Addon:RegisterCooldown(cooldown)
+        end)
+    end
+
+    if CooldownFrame_SetDisplayAsPercentage then
+        hooksecurefunc("CooldownFrame_SetDisplayAsPercentage", function(cooldown)
+            Addon:RegisterCooldown(cooldown)
+        end)
+    end
 end
 
 function Addon:InitializeDatabase()
@@ -252,28 +292,12 @@ Addon:SetScript("OnEvent", function(_, event)
         Addon:InitializeSharedMedia()
         Addon:CreateOptionsPanel()
         Addon:RefreshAllCooldowns()
-
-        if CooldownFrame_Set then
-            hooksecurefunc("CooldownFrame_Set", function(cooldown)
-                Addon:RegisterCooldown(cooldown)
-            end)
-        end
-
-        if CooldownFrame_SetDisplayAsPercentage then
-            hooksecurefunc("CooldownFrame_SetDisplayAsPercentage", function(cooldown)
-                Addon:RegisterCooldown(cooldown)
-            end)
-        end
+        Addon:HookCooldownAPIs()
         return
     end
 
-    Addon:ScanCooldownFrames()
+    Addon:RequestCooldownScan()
 end)
 
 Addon:RegisterEvent("PLAYER_LOGIN")
 Addon:RegisterEvent("PLAYER_ENTERING_WORLD")
-Addon:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
-Addon:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-Addon:RegisterEvent("BAG_UPDATE_COOLDOWN")
-Addon:RegisterEvent("PET_BAR_UPDATE_COOLDOWN")
-Addon:RegisterEvent("UPDATE_SHAPESHIFT_COOLDOWN")
