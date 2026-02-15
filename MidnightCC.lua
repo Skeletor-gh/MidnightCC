@@ -7,6 +7,7 @@ local Addon = MidnightCC
 Addon.defaults = {
     fontName = "Friz Quadrata TT",
     fontSize = 20,
+    anchor = "center",
 }
 
 Addon.availableFonts = {
@@ -18,6 +19,12 @@ Addon.availableFonts = {
 
 Addon.cooldowns = setmetatable({}, { __mode = "k" })
 
+Addon.anchorPoints = {
+    top = "TOP",
+    center = "CENTER",
+    bottom = "BOTTOM",
+}
+
 local function CopyDefaults(target, defaults)
     for key, value in pairs(defaults) do
         if target[key] == nil then
@@ -27,15 +34,52 @@ local function CopyDefaults(target, defaults)
 end
 
 function Addon:GetFontPath()
+    if self.sharedMedia and self.db.fontName then
+        local sharedPath = self.sharedMedia:Fetch("font", self.db.fontName, true)
+
+        if sharedPath then
+            return sharedPath
+        end
+    end
+
     return self.availableFonts[self.db.fontName] or self.availableFonts[self.defaults.fontName] or STANDARD_TEXT_FONT
 end
 
-function Addon:ApplyFontToRegion(region)
+function Addon:GetSortedFontNames()
+    local names = {}
+
+    for name in pairs(self.availableFonts) do
+        names[#names + 1] = name
+    end
+
+    if self.sharedMedia then
+        for _, name in ipairs(self.sharedMedia:List("font") or {}) do
+            if not self.availableFonts[name] then
+                names[#names + 1] = name
+            end
+        end
+    end
+
+    table.sort(names)
+    return names
+end
+
+function Addon:GetAnchorPoint()
+    return self.anchorPoints[self.db.anchor] or self.anchorPoints[self.defaults.anchor]
+end
+
+function Addon:ApplyFontToRegion(region, cooldown)
     if not region or region:GetObjectType() ~= "FontString" then
         return
     end
 
     region:SetFont(self:GetFontPath(), self.db.fontSize, "OUTLINE")
+
+    if cooldown and region.SetPoint and region.ClearAllPoints then
+        local anchorPoint = self:GetAnchorPoint()
+        region:ClearAllPoints()
+        region:SetPoint(anchorPoint, cooldown, anchorPoint, 0, 0)
+    end
 end
 
 function Addon:ApplyToCooldown(cooldown)
@@ -51,7 +95,7 @@ function Addon:ApplyToCooldown(cooldown)
     local region = select(regionIndex, cooldown:GetRegions())
 
     while region do
-        self:ApplyFontToRegion(region)
+        self:ApplyFontToRegion(region, cooldown)
         regionIndex = regionIndex + 1
         region = select(regionIndex, cooldown:GetRegions())
     end
@@ -61,13 +105,13 @@ function Addon:ApplyToCooldown(cooldown)
 
     while child do
         if child.GetObjectType and child:GetObjectType() == "FontString" then
-            self:ApplyFontToRegion(child)
+            self:ApplyFontToRegion(child, cooldown)
         elseif child.GetRegions then
             local childRegionIndex = 1
             local childRegion = select(childRegionIndex, child:GetRegions())
 
             while childRegion do
-                self:ApplyFontToRegion(childRegion)
+                self:ApplyFontToRegion(childRegion, cooldown)
                 childRegionIndex = childRegionIndex + 1
                 childRegion = select(childRegionIndex, child:GetRegions())
             end
@@ -124,12 +168,47 @@ function Addon:InitializeDatabase()
 end
 
 function Addon:SetFontName(fontName)
-    if not self.availableFonts[fontName] then
+    local isCustomFont = self.availableFonts[fontName]
+
+    if not isCustomFont and self.sharedMedia then
+        isCustomFont = self.sharedMedia:Fetch("font", fontName, true)
+    end
+
+    if not isCustomFont then
         return
     end
 
     self.db.fontName = fontName
     self:RefreshAllCooldowns()
+end
+
+function Addon:SetAnchor(anchor)
+    if not self.anchorPoints[anchor] then
+        return
+    end
+
+    self.db.anchor = anchor
+    self:RefreshAllCooldowns()
+end
+
+function Addon:InitializeSharedMedia()
+    if not LibStub then
+        return
+    end
+
+    local sharedMedia = LibStub("LibSharedMedia-3.0", true)
+
+    if not sharedMedia then
+        return
+    end
+
+    self.sharedMedia = sharedMedia
+
+    if sharedMedia.RegisterCallback then
+        sharedMedia.RegisterCallback(self, "LibSharedMedia_Registered", function()
+            Addon:RefreshAllCooldowns()
+        end)
+    end
 end
 
 function Addon:SetFontSize(fontSize)
@@ -149,6 +228,7 @@ end
 Addon:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         Addon:InitializeDatabase()
+        Addon:InitializeSharedMedia()
         Addon:CreateOptionsPanel()
         Addon:RefreshAllCooldowns()
 

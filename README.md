@@ -9,7 +9,8 @@ MidnightCC is a World of Warcraft addon for the 12.0 API that reskins cooldown n
 
 ## In-game options
 MidnightCC adds an options panel in the AddOns settings where you can:
-- Choose a cooldown font from a predefined list.
+- Choose a cooldown font from a predefined list plus any fonts registered through LibSharedMedia-3.0 (if installed).
+- Set cooldown text anchor position inside the button (top, center, or bottom).
 - Set cooldown font size (8-48).
 - Force a full cooldown refresh.
 
