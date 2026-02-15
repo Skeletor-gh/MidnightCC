@@ -12,6 +12,91 @@ local function GetFontStyleLabel(styleKey)
     return style and style.label or "Outline"
 end
 
+local function CreateFontSelector(frame, anchor)
+    local selectorButton = CreateFrame("Button", addonName .. "FontSelectorButton", frame, "UIPanelButtonTemplate")
+    selectorButton:SetSize(220, 24)
+    selectorButton:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
+
+    local listFrame = CreateFrame("Frame", addonName .. "FontSelectorList", frame)
+    listFrame:SetSize(248, 170)
+    listFrame:SetPoint("TOPLEFT", selectorButton, "BOTTOMLEFT", 0, -2)
+    listFrame:SetFrameStrata("DIALOG")
+    listFrame:Hide()
+
+    local background = listFrame:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints()
+    background:SetColorTexture(0, 0, 0, 0.9)
+
+    local inset = listFrame:CreateTexture(nil, "BORDER")
+    inset:SetPoint("TOPLEFT", 1, -1)
+    inset:SetPoint("BOTTOMRIGHT", -1, 1)
+    inset:SetColorTexture(0.05, 0.05, 0.05, 0.95)
+
+    local scrollFrame = CreateFrame("ScrollFrame", addonName .. "FontSelectorScroll", listFrame, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 8, -8)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
+
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(212, 1)
+    scrollFrame:SetScrollChild(content)
+
+    local itemHeight = 20
+    local function RefreshList()
+        local fonts = Addon:GetSortedFontNames()
+
+        for index, fontName in ipairs(fonts) do
+            local button = content.buttons and content.buttons[index]
+
+            if not button then
+                content.buttons = content.buttons or {}
+                button = CreateFrame("Button", nil, content)
+                button:SetSize(212, itemHeight)
+
+                button.text = button:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+                button.text:SetPoint("LEFT", 6, 0)
+                button.text:SetPoint("RIGHT", -6, 0)
+                button.text:SetJustifyH("LEFT")
+
+                button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
+                button.highlight:SetAllPoints()
+                button.highlight:SetColorTexture(1, 1, 1, 0.1)
+
+                content.buttons[index] = button
+            end
+
+            button:SetPoint("TOPLEFT", 0, -((index - 1) * itemHeight))
+            button.text:SetText(fontName)
+            button:Show()
+
+            button:SetScript("OnClick", function()
+                Addon:SetFontName(fontName)
+                selectorButton:SetText(fontName)
+                listFrame:Hide()
+            end)
+        end
+
+        if content.buttons then
+            for index = #fonts + 1, #content.buttons do
+                content.buttons[index]:Hide()
+            end
+        end
+
+        content:SetHeight(math.max(#fonts * itemHeight, 1))
+    end
+
+    selectorButton:SetText(Addon.db.fontName)
+    selectorButton:SetScript("OnClick", function()
+        RefreshList()
+        listFrame:SetShown(not listFrame:IsShown())
+    end)
+
+    frame:SetScript("OnHide", function()
+        listFrame:Hide()
+    end)
+
+    return selectorButton
+end
+
 function Addon:CreateOptionsPanel()
     if self.optionsPanel then
         return
@@ -40,29 +125,10 @@ function Addon:CreateOptionsPanel()
         dropdownLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -24)
         dropdownLabel:SetText("Cooldown font")
 
-        local dropdown = CreateFrame("Frame", addonName .. "FontDropdown", frame, "UIDropDownMenuTemplate")
-        dropdown:SetPoint("TOPLEFT", dropdownLabel, "BOTTOMLEFT", -16, -4)
-
-        UIDropDownMenu_SetWidth(dropdown, 220)
-        if UIDropDownMenu_SetMaxVisibleButtons then
-            UIDropDownMenu_SetMaxVisibleButtons(dropdown, 12)
-        end
-        UIDropDownMenu_Initialize(dropdown, function()
-            for _, fontName in ipairs(Addon:GetSortedFontNames()) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = fontName
-                info.checked = (Addon.db.fontName == fontName)
-                info.func = function()
-                    UIDropDownMenu_SetSelectedName(dropdown, fontName)
-                    Addon:SetFontName(fontName)
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-        UIDropDownMenu_SetSelectedName(dropdown, Addon.db.fontName)
+        local fontSelectorButton = CreateFontSelector(frame, dropdownLabel)
 
         local fontStyleLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        fontStyleLabel:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 16, -24)
+        fontStyleLabel:SetPoint("TOPLEFT", fontSelectorButton, "BOTTOMLEFT", 0, -24)
         fontStyleLabel:SetText("Cooldown font format")
 
         local fontStyleDropdown = CreateFrame("Frame", addonName .. "FontStyleDropdown", frame, "UIDropDownMenuTemplate")

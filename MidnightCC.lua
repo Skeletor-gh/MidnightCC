@@ -59,6 +59,44 @@ Addon.anchorPoints = {
     bottom = "BOTTOM",
 }
 
+
+local actionButtonNamePatterns = {
+    "^ActionButton%d+$",
+    "^MultiBarBottomLeftButton%d+$",
+    "^MultiBarBottomRightButton%d+$",
+    "^MultiBarRightButton%d+$",
+    "^MultiBarLeftButton%d+$",
+    "^MultiBar5Button%d+$",
+    "^MultiBar6Button%d+$",
+    "^MultiBar7Button%d+$",
+    "^PetActionButton%d+$",
+    "^StanceButton%d+$",
+    "^PossessButton%d+$",
+    "^OverrideActionBarButton%d+$",
+    "^ZoneAbilityFrameSpellButton$",
+    "^ExtraActionButton%d+$",
+}
+
+local function IsNamedActionButton(frame)
+    if not frame or not frame.GetName then
+        return false
+    end
+
+    local frameName = frame:GetName()
+
+    if not frameName then
+        return false
+    end
+
+    for _, pattern in ipairs(actionButtonNamePatterns) do
+        if frameName:match(pattern) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function CopyDefaults(target, defaults)
     for key, value in pairs(defaults) do
         if target[key] == nil then
@@ -131,6 +169,40 @@ function Addon:ApplyFontToRegion(region, cooldown)
     end
 end
 
+function Addon:IsActionBarCooldown(cooldown)
+    if not cooldown then
+        return false
+    end
+
+    local frame = cooldown
+
+    while frame do
+        if IsNamedActionButton(frame) then
+            return true
+        end
+
+        if frame.GetAttribute then
+            local actionSlot = frame:GetAttribute("action")
+
+            if type(actionSlot) == "number" then
+                return true
+            end
+
+            if frame:GetAttribute("type") == "action" then
+                return true
+            end
+        end
+
+        if type(frame.action) == "number" then
+            return true
+        end
+
+        frame = frame.GetParent and frame:GetParent() or nil
+    end
+
+    return false
+end
+
 function Addon:ApplyToCooldown(cooldown)
     if not cooldown then
         return
@@ -172,7 +244,7 @@ function Addon:ApplyToCooldown(cooldown)
 end
 
 function Addon:RegisterCooldown(cooldown)
-    if not cooldown or self.cooldowns[cooldown] then
+    if not cooldown or self.cooldowns[cooldown] or not self:IsActionBarCooldown(cooldown) then
         return
     end
 
@@ -191,7 +263,7 @@ function Addon:ScanCooldownFrames()
     local frame = EnumerateFrames()
 
     while frame do
-        if frame.GetObjectType and frame:GetObjectType() == "Cooldown" then
+        if frame.GetObjectType and frame:GetObjectType() == "Cooldown" and self:IsActionBarCooldown(frame) then
             self:RegisterCooldown(frame)
         end
 
