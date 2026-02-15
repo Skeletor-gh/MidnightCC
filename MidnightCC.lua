@@ -8,6 +8,8 @@ Addon.defaults = {
     fontName = "Friz Quadrata TT",
     fontSize = 20,
     anchor = "center",
+    offsetX = 0,
+    offsetY = 0,
 }
 
 Addon.availableFonts = {
@@ -78,7 +80,7 @@ function Addon:ApplyFontToRegion(region, cooldown)
     if cooldown and region.SetPoint and region.ClearAllPoints then
         local anchorPoint = self:GetAnchorPoint()
         region:ClearAllPoints()
-        region:SetPoint(anchorPoint, cooldown, anchorPoint, 0, 0)
+        region:SetPoint(anchorPoint, cooldown, anchorPoint, self.db.offsetX or 0, self.db.offsetY or 0)
     end
 end
 
@@ -222,6 +224,25 @@ function Addon:SetFontSize(fontSize)
     size = math.max(8, math.min(48, size))
 
     self.db.fontSize = size
+    self:RefreshAllCooldowns()
+end
+
+function Addon:SetOffsets(offsetX, offsetY)
+    local x = tonumber(offsetX)
+    local y = tonumber(offsetY)
+
+    if not x or not y then
+        return
+    end
+
+    x = math.floor(x + 0.5)
+    y = math.floor(y + 0.5)
+
+    x = math.max(-10, math.min(10, x))
+    y = math.max(-10, math.min(10, y))
+
+    self.db.offsetX = x
+    self.db.offsetY = y
     self:RefreshAllCooldowns()
 end
 
