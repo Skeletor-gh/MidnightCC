@@ -7,9 +7,40 @@ local Addon = MidnightCC
 Addon.defaults = {
     fontName = "Friz Quadrata TT",
     fontSize = 20,
+    fontStyle = "outline",
     anchor = "center",
     offsetX = 0,
     offsetY = 0,
+}
+
+Addon.fontStyles = {
+    normal = {
+        label = "Normal",
+        flags = "",
+        shadow = false,
+    },
+    outline = {
+        label = "Outline",
+        flags = "OUTLINE",
+        shadow = false,
+    },
+    shadow = {
+        label = "Shadow",
+        flags = "",
+        shadow = true,
+    },
+    shadowOutline = {
+        label = "Shadow + Outline",
+        flags = "OUTLINE",
+        shadow = true,
+    },
+}
+
+Addon.fontStyleOrder = {
+    "normal",
+    "outline",
+    "shadow",
+    "shadowOutline",
 }
 
 Addon.availableFonts = {
@@ -71,12 +102,27 @@ function Addon:GetAnchorPoint()
     return self.anchorPoints[self.db.anchor] or self.anchorPoints[self.defaults.anchor]
 end
 
+function Addon:GetFontStyle()
+    local styleKey = self.db.fontStyle or self.defaults.fontStyle
+    return self.fontStyles[styleKey] or self.fontStyles[self.defaults.fontStyle]
+end
+
 function Addon:ApplyFontToRegion(region, cooldown)
     if not region or region:GetObjectType() ~= "FontString" then
         return
     end
 
-    region:SetFont(self:GetFontPath(), self.db.fontSize, "OUTLINE")
+    local fontStyle = self:GetFontStyle()
+
+    region:SetFont(self:GetFontPath(), self.db.fontSize, fontStyle.flags)
+
+    if fontStyle.shadow and region.SetShadowOffset and region.SetShadowColor then
+        region:SetShadowOffset(1, -1)
+        region:SetShadowColor(0, 0, 0, 1)
+    elseif region.SetShadowOffset and region.SetShadowColor then
+        region:SetShadowOffset(0, 0)
+        region:SetShadowColor(0, 0, 0, 0)
+    end
 
     if cooldown and region.SetPoint and region.ClearAllPoints then
         local anchorPoint = self:GetAnchorPoint()
@@ -230,6 +276,15 @@ function Addon:SetAnchor(anchor)
     end
 
     self.db.anchor = anchor
+    self:RefreshAllCooldowns()
+end
+
+function Addon:SetFontStyle(styleKey)
+    if not self.fontStyles[styleKey] then
+        return
+    end
+
+    self.db.fontStyle = styleKey
     self:RefreshAllCooldowns()
 end
 
