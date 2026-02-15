@@ -1,8 +1,8 @@
 ## Interface: 120000
 ## Title: MidnightCC
 ## Notes: Reskin cooldown text on action bars without comparing cooldown values.
-## Author: MidnightCC
-## Version: 1.0.0
+## Author: Skeletor-gh
+## Version: 1.0
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
 
