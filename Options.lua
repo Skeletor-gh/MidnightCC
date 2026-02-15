@@ -7,6 +7,11 @@ local anchorLabels = {
     bottom = "Bottom",
 }
 
+local function GetFontStyleLabel(styleKey)
+    local style = Addon.fontStyles and Addon.fontStyles[styleKey]
+    return style and style.label or "Outline"
+end
+
 function Addon:CreateOptionsPanel()
     if self.optionsPanel then
         return
@@ -40,7 +45,7 @@ function Addon:CreateOptionsPanel()
 
         UIDropDownMenu_SetWidth(dropdown, 220)
         if UIDropDownMenu_SetMaxVisibleButtons then
-            UIDropDownMenu_SetMaxVisibleButtons(dropdown, 10)
+            UIDropDownMenu_SetMaxVisibleButtons(dropdown, 12)
         end
         UIDropDownMenu_Initialize(dropdown, function()
             for _, fontName in ipairs(Addon:GetSortedFontNames()) do
@@ -56,8 +61,34 @@ function Addon:CreateOptionsPanel()
         end)
         UIDropDownMenu_SetSelectedName(dropdown, Addon.db.fontName)
 
+        local fontStyleLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        fontStyleLabel:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 16, -24)
+        fontStyleLabel:SetText("Cooldown font format")
+
+        local fontStyleDropdown = CreateFrame("Frame", addonName .. "FontStyleDropdown", frame, "UIDropDownMenuTemplate")
+        fontStyleDropdown:SetPoint("TOPLEFT", fontStyleLabel, "BOTTOMLEFT", -16, -4)
+
+        UIDropDownMenu_SetWidth(fontStyleDropdown, 180)
+        UIDropDownMenu_Initialize(fontStyleDropdown, function()
+            for _, styleKey in ipairs(Addon.fontStyleOrder) do
+                local styleData = Addon.fontStyles[styleKey]
+
+                if styleData then
+                    local info = UIDropDownMenu_CreateInfo()
+                    info.text = styleData.label
+                    info.checked = (Addon.db.fontStyle == styleKey)
+                    info.func = function()
+                        UIDropDownMenu_SetSelectedName(fontStyleDropdown, styleData.label)
+                        Addon:SetFontStyle(styleKey)
+                    end
+                    UIDropDownMenu_AddButton(info)
+                end
+            end
+        end)
+        UIDropDownMenu_SetSelectedName(fontStyleDropdown, GetFontStyleLabel(Addon.db.fontStyle or Addon.defaults.fontStyle))
+
         local anchorLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        anchorLabel:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 16, -24)
+        anchorLabel:SetPoint("TOPLEFT", fontStyleDropdown, "BOTTOMLEFT", 16, -24)
         anchorLabel:SetText("Cooldown anchor")
 
         local anchorDropdown = CreateFrame("Frame", addonName .. "AnchorDropdown", frame, "UIDropDownMenuTemplate")
