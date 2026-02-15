@@ -39,6 +39,9 @@ function Addon:CreateOptionsPanel()
         dropdown:SetPoint("TOPLEFT", dropdownLabel, "BOTTOMLEFT", -16, -4)
 
         UIDropDownMenu_SetWidth(dropdown, 220)
+        if UIDropDownMenu_SetMaxVisibleButtons then
+            UIDropDownMenu_SetMaxVisibleButtons(dropdown, 10)
+        end
         UIDropDownMenu_Initialize(dropdown, function()
             for _, fontName in ipairs(Addon:GetSortedFontNames()) do
                 local info = UIDropDownMenu_CreateInfo()
@@ -93,9 +96,45 @@ function Addon:CreateOptionsPanel()
             Addon:SetFontSize(rounded)
         end)
 
+        local offsetXSlider = CreateFrame("Slider", addonName .. "OffsetXSlider", frame, "OptionsSliderTemplate")
+        offsetXSlider:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", 0, -40)
+        offsetXSlider:SetWidth(280)
+        offsetXSlider:SetMinMaxValues(-10, 10)
+        offsetXSlider:SetValueStep(1)
+        offsetXSlider:SetObeyStepOnDrag(true)
+        offsetXSlider:SetValue(Addon.db.offsetX or 0)
+
+        _G[offsetXSlider:GetName() .. "Low"]:SetText("-10")
+        _G[offsetXSlider:GetName() .. "High"]:SetText("10")
+        _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. (Addon.db.offsetX or 0) .. "px")
+
+        offsetXSlider:SetScript("OnValueChanged", function(_, value)
+            local rounded = math.floor(value + 0.5)
+            _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. rounded .. "px")
+            Addon:SetOffsets(rounded, Addon.db.offsetY or 0)
+        end)
+
+        local offsetYSlider = CreateFrame("Slider", addonName .. "OffsetYSlider", frame, "OptionsSliderTemplate")
+        offsetYSlider:SetPoint("TOPLEFT", offsetXSlider, "BOTTOMLEFT", 0, -28)
+        offsetYSlider:SetWidth(280)
+        offsetYSlider:SetMinMaxValues(-10, 10)
+        offsetYSlider:SetValueStep(1)
+        offsetYSlider:SetObeyStepOnDrag(true)
+        offsetYSlider:SetValue(Addon.db.offsetY or 0)
+
+        _G[offsetYSlider:GetName() .. "Low"]:SetText("-10")
+        _G[offsetYSlider:GetName() .. "High"]:SetText("10")
+        _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. (Addon.db.offsetY or 0) .. "px")
+
+        offsetYSlider:SetScript("OnValueChanged", function(_, value)
+            local rounded = math.floor(value + 0.5)
+            _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. rounded .. "px")
+            Addon:SetOffsets(Addon.db.offsetX or 0, rounded)
+        end)
+
         local refreshButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         refreshButton:SetSize(140, 24)
-        refreshButton:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", -8, -28)
+        refreshButton:SetPoint("TOPLEFT", offsetYSlider, "BOTTOMLEFT", -8, -30)
         refreshButton:SetText("Refresh Cooldowns")
         refreshButton:SetScript("OnClick", function()
             Addon:RefreshAllCooldowns()
