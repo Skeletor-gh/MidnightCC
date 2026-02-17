@@ -6,6 +6,8 @@
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\MidnightCC\icon
+## X-Category: Skeletor
+## Category: Skeletor
 
 MidnightCC.lua
 Options.lua
