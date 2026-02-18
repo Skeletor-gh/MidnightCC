@@ -241,8 +241,19 @@ function Addon:CreateOptionsPanel()
     self.optionsPanel = panel
 
     if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
-        local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name, panel.name)
+        local category
+
+        if Settings.RegisterCanvasLayoutSubcategory and Settings.RegisterVerticalLayoutCategory then
+            local parentCategory = Settings.RegisterVerticalLayoutCategory("Skeletor")
+            Settings.RegisterAddOnCategory(parentCategory)
+
+            category = Settings.RegisterCanvasLayoutSubcategory(parentCategory, panel, panel.name, panel.name)
+        else
+            category = Settings.RegisterCanvasLayoutCategory(panel, panel.name, panel.name)
+        end
+
         Settings.RegisterAddOnCategory(category)
+        self.settingsCategory = category
         self.settingsCategoryID = category:GetID()
     elseif InterfaceOptions_AddCategory then
         InterfaceOptions_AddCategory(panel)
@@ -250,8 +261,8 @@ function Addon:CreateOptionsPanel()
 
     SLASH_MIDNIGHTCC1 = "/midnightcc"
     SlashCmdList["MIDNIGHTCC"] = function()
-        if Settings and Settings.OpenToCategory and Addon.settingsCategoryID then
-            Settings.OpenToCategory(Addon.settingsCategoryID)
+        if Settings and Settings.OpenToCategory and (Addon.settingsCategory or Addon.settingsCategoryID) then
+            Settings.OpenToCategory(Addon.settingsCategory or Addon.settingsCategoryID)
             return
         end
 
