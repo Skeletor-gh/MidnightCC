@@ -1,4 +1,5 @@
 local addonName = ...
+local strmatch = string.match
 
 MidnightCC = CreateFrame("Frame", addonName .. "Frame")
 
@@ -108,7 +109,7 @@ local function IsBlockedFrameName(frameName)
     end
 
     for _, pattern in ipairs(blockedFrameNamePatterns) do
-        if frameName:match(pattern) then
+        if strmatch(frameName, pattern) then
             return true
         end
     end
@@ -154,7 +155,7 @@ local function IsNamedActionButton(frame)
     end
 
     for _, pattern in ipairs(actionButtonNamePatterns) do
-        if frameName:match(pattern) then
+        if strmatch(frameName, pattern) then
             return true
         end
     end
