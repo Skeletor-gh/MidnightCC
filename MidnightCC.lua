@@ -83,6 +83,18 @@ local blockedFrameNamePatterns = {
     "NamePlate",
 }
 
+local function CanMatchFrameName(frameName)
+    if type(frameName) ~= "string" then
+        return false
+    end
+
+    if issecret and issecret(frameName) then
+        return false
+    end
+
+    return true
+end
+
 local function SafeCall(frame, methodName, ...)
     if not frame then
         return nil
@@ -104,7 +116,7 @@ local function SafeCall(frame, methodName, ...)
 end
 
 local function IsBlockedFrameName(frameName)
-    if not frameName then
+    if not CanMatchFrameName(frameName) then
         return false
     end
 
@@ -131,12 +143,6 @@ local function IsBlockedCooldownFrame(frame)
             return true
         end
 
-        local debugName = SafeCall(current, "GetDebugName")
-
-        if IsBlockedFrameName(debugName) then
-            return true
-        end
-
         current = SafeCall(current, "GetParent")
     end
 
@@ -150,7 +156,7 @@ local function IsNamedActionButton(frame)
 
     local frameName = SafeCall(frame, "GetName")
 
-    if not frameName then
+    if not CanMatchFrameName(frameName) then
         return false
     end
 
