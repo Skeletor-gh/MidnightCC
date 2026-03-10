@@ -1,4 +1,5 @@
 local addonName = ...
+local strmatch = string.match
 
 MidnightCC = CreateFrame("Frame", addonName .. "Frame")
 
@@ -77,19 +78,90 @@ local actionButtonNamePatterns = {
     "^ExtraActionButton%d+$",
 }
 
-local function IsNamedActionButton(frame)
-    if not frame or not frame.GetName then
+local blockedFrameNamePatterns = {
+    "^NamePlate",
+    "NamePlate",
+}
+
+local function CanMatchFrameName(frameName)
+    if type(frameName) ~= "string" then
         return false
     end
 
-    local frameName = frame:GetName()
+    if issecret and issecret(frameName) then
+        return false
+    end
 
-    if not frameName then
+    return true
+end
+
+local function SafeCall(frame, methodName, ...)
+    if not frame then
+        return nil
+    end
+
+    local method = frame[methodName]
+
+    if type(method) ~= "function" then
+        return nil
+    end
+
+    local ok, result = pcall(method, frame, ...)
+
+    if not ok then
+        return nil
+    end
+
+    return result
+end
+
+local function IsBlockedFrameName(frameName)
+    if not CanMatchFrameName(frameName) then
+        return false
+    end
+
+    for _, pattern in ipairs(blockedFrameNamePatterns) do
+        if strmatch(frameName, pattern) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function IsBlockedCooldownFrame(frame)
+    local current = frame
+
+    while current do
+        if SafeCall(current, "IsForbidden") then
+            return true
+        end
+
+        local currentName = SafeCall(current, "GetName")
+
+        if IsBlockedFrameName(currentName) then
+            return true
+        end
+
+        current = SafeCall(current, "GetParent")
+    end
+
+    return false
+end
+
+local function IsNamedActionButton(frame)
+    if not frame or IsBlockedCooldownFrame(frame) then
+        return false
+    end
+
+    local frameName = SafeCall(frame, "GetName")
+
+    if not CanMatchFrameName(frameName) then
         return false
     end
 
     for _, pattern in ipairs(actionButtonNamePatterns) do
-        if frameName:match(pattern) then
+        if strmatch(frameName, pattern) then
             return true
         end
     end
@@ -170,7 +242,7 @@ function Addon:ApplyFontToRegion(region, cooldown)
 end
 
 function Addon:IsActionBarCooldown(cooldown)
-    if not cooldown then
+    if not cooldown or IsBlockedCooldownFrame(cooldown) then
         return false
     end
 
@@ -182,13 +254,13 @@ function Addon:IsActionBarCooldown(cooldown)
         end
 
         if frame.GetAttribute then
-            local actionSlot = frame:GetAttribute("action")
+            local actionSlot = SafeCall(frame, "GetAttribute", "action")
 
             if type(actionSlot) == "number" then
                 return true
             end
 
-            if frame:GetAttribute("type") == "action" then
+            if SafeCall(frame, "GetAttribute", "type") == "action" then
                 return true
             end
         end
@@ -197,7 +269,7 @@ function Addon:IsActionBarCooldown(cooldown)
             return true
         end
 
-        frame = frame.GetParent and frame:GetParent() or nil
+        frame = SafeCall(frame, "GetParent")
     end
 
     return false
