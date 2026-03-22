@@ -1,7 +1,7 @@
 MidnightCC is a World of Warcraft addon for the 12.0 API that reskins cooldown number text on action-bar cooldown frames.
 
 ## Changelog
-- Added guardrails for secret value comparison in NamePlates and other parts of the UI protected by Blizzard
+- Profile management, and import/export features 
 
 ## What it does
 - Changes only the cooldown text font family and font size.
