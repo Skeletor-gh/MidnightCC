@@ -60,6 +60,15 @@ Addon.anchorPoints = {
     bottom = "BOTTOM",
 }
 
+Addon.presetFields = {
+    "fontName",
+    "fontSize",
+    "fontStyle",
+    "anchor",
+    "offsetX",
+    "offsetY",
+}
+
 
 local actionButtonNamePatterns = {
     "^ActionButton%d+$",
@@ -175,6 +184,211 @@ local function CopyDefaults(target, defaults)
             target[key] = value
         end
     end
+end
+
+local function Trim(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local trimmed = strmatch(value, "^%s*(.-)%s*$")
+
+    if trimmed == "" then
+        return nil
+    end
+
+    return trimmed
+end
+
+local function EncodePresetValue(value)
+    return tostring(value):gsub("([^%w%-_%.~])", function(char)
+        return string.format("%%%02X", string.byte(char))
+    end)
+end
+
+local function DecodePresetValue(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    return value:gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end)
+end
+
+local function BuildPresetData(source, defaults)
+    local preset = {}
+
+    for _, field in ipairs(Addon.presetFields) do
+        local value = source[field]
+
+        if value == nil then
+            value = defaults[field]
+        end
+
+        preset[field] = value
+    end
+
+    if type(source.groupProfiles) == "table" then
+        local copiedProfiles = {}
+
+        for groupName, profileName in pairs(source.groupProfiles) do
+            copiedProfiles[groupName] = profileName
+        end
+
+        preset.groupProfiles = copiedProfiles
+    end
+
+    return preset
+end
+
+function Addon:ApplyPresetData(presetData, presetName)
+    if type(presetData) ~= "table" then
+        return false
+    end
+
+    local sanitizedPreset = BuildPresetData(presetData, self.defaults)
+
+    for _, field in ipairs(self.presetFields) do
+        self.db[field] = sanitizedPreset[field]
+    end
+
+    if sanitizedPreset.groupProfiles then
+        self.db.groupProfiles = sanitizedPreset.groupProfiles
+    end
+
+    self.db.activePreset = presetName
+    self:RefreshAllCooldowns()
+    return true
+end
+
+function Addon:SerializePreset(presetData)
+    local source = presetData or self.db
+    local preset = BuildPresetData(source, self.defaults)
+    local segments = {}
+
+    for _, field in ipairs(self.presetFields) do
+        local value = preset[field]
+
+        if value ~= nil then
+            segments[#segments + 1] = field .. "=" .. EncodePresetValue(value)
+        end
+    end
+
+    if type(preset.groupProfiles) == "table" then
+        for groupName, profileName in pairs(preset.groupProfiles) do
+            if type(groupName) == "string" and profileName ~= nil then
+                segments[#segments + 1] = "groupProfiles." .. EncodePresetValue(groupName) .. "=" .. EncodePresetValue(profileName)
+            end
+        end
+    end
+
+    return table.concat(segments, ";")
+end
+
+function Addon:DeserializePreset(serializedPreset)
+    if type(serializedPreset) ~= "string" then
+        return nil
+    end
+
+    local trimmed = Trim(serializedPreset)
+
+    if not trimmed then
+        return nil
+    end
+
+    local preset = {}
+    local hasValue = false
+
+    for segment in trimmed:gmatch("([^;]+)") do
+        local rawKey, rawValue = segment:match("^([^=]+)=(.*)$")
+
+        if rawKey and rawValue then
+            local key = Trim(rawKey)
+            local decodedValue = DecodePresetValue(rawValue)
+
+            if key and decodedValue then
+                if key == "fontName" or key == "fontStyle" or key == "anchor" then
+                    preset[key] = decodedValue
+                    hasValue = true
+                elseif key == "fontSize" or key == "offsetX" or key == "offsetY" then
+                    local numericValue = tonumber(decodedValue)
+
+                    if numericValue then
+                        preset[key] = numericValue
+                        hasValue = true
+                    end
+                else
+                    local groupName = key:match("^groupProfiles%.(.+)$")
+
+                    if groupName then
+                        preset.groupProfiles = preset.groupProfiles or {}
+                        preset.groupProfiles[DecodePresetValue(groupName)] = decodedValue
+                        hasValue = true
+                    end
+                end
+            end
+        end
+    end
+
+    if not hasValue then
+        return nil
+    end
+
+    return BuildPresetData(preset, self.defaults)
+end
+
+function Addon:SavePreset(name)
+    local presetName = Trim(name)
+
+    if not presetName then
+        return false
+    end
+
+    self.db.savedPresets = self.db.savedPresets or {}
+    self.db.savedPresets[presetName] = BuildPresetData(self.db, self.defaults)
+    self.db.activePreset = presetName
+    return true
+end
+
+function Addon:LoadPreset(name)
+    local presetName = Trim(name)
+
+    if not presetName then
+        return false
+    end
+
+    local savedPreset = self.db.savedPresets and self.db.savedPresets[presetName]
+
+    if not savedPreset then
+        return false
+    end
+
+    if type(savedPreset) == "string" then
+        savedPreset = self:DeserializePreset(savedPreset)
+    end
+
+    return self:ApplyPresetData(savedPreset, presetName)
+end
+
+function Addon:DeletePreset(name)
+    local presetName = Trim(name)
+
+    if not presetName or type(self.db.savedPresets) ~= "table" then
+        return false
+    end
+
+    if self.db.savedPresets[presetName] == nil then
+        return false
+    end
+
+    self.db.savedPresets[presetName] = nil
+
+    if self.db.activePreset == presetName then
+        self.db.activePreset = nil
+    end
+
+    return true
 end
 
 function Addon:GetFontPath()
@@ -396,6 +610,12 @@ end
 function Addon:InitializeDatabase()
     MidnightCCDB = MidnightCCDB or {}
     CopyDefaults(MidnightCCDB, self.defaults)
+    MidnightCCDB.savedPresets = MidnightCCDB.savedPresets or {}
+
+    if MidnightCCDB.activePreset ~= nil and type(MidnightCCDB.activePreset) ~= "string" then
+        MidnightCCDB.activePreset = nil
+    end
+
     self.db = MidnightCCDB
 end
 
