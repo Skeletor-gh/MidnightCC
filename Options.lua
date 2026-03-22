@@ -12,6 +12,17 @@ local function GetFontStyleLabel(styleKey)
     return style and style.label or "Outline"
 end
 
+local function GetSortedPresetNames()
+    local names = {}
+
+    for presetName in pairs(Addon.db.savedPresets or {}) do
+        names[#names + 1] = presetName
+    end
+
+    table.sort(names)
+    return names
+end
+
 local function CreateFontSelector(frame, anchor)
     local selectorButton = CreateFrame("Button", addonName .. "FontSelectorButton", frame, "UIPanelButtonTemplate")
     selectorButton:SetSize(220, 24)
@@ -121,8 +132,159 @@ function Addon:CreateOptionsPanel()
         subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
         subtitle:SetText("Reskin cooldown number fonts only (no cooldown value comparisons).")
 
+        local selectedPresetName = Addon.db.activePreset
+
+        local presetLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+        presetLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -22)
+        presetLabel:SetText("Presets")
+
+        local presetDropdown = CreateFrame("Frame", addonName .. "PresetDropdown", frame, "UIDropDownMenuTemplate")
+        presetDropdown:SetPoint("TOPLEFT", presetLabel, "BOTTOMLEFT", -16, -2)
+
+        local function RefreshPresetDropdownText()
+            if selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName] then
+                UIDropDownMenu_SetText(presetDropdown, selectedPresetName)
+                return
+            end
+
+            selectedPresetName = nil
+            UIDropDownMenu_SetText(presetDropdown, "(Select preset)")
+        end
+
+        UIDropDownMenu_SetWidth(presetDropdown, 130)
+        UIDropDownMenu_Initialize(presetDropdown, function()
+            local names = GetSortedPresetNames()
+
+            if #names == 0 then
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = "(No presets)"
+                info.disabled = true
+                UIDropDownMenu_AddButton(info)
+                return
+            end
+
+            for _, presetName in ipairs(names) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = presetName
+                info.checked = (selectedPresetName == presetName)
+                info.func = function()
+                    selectedPresetName = presetName
+                    RefreshPresetDropdownText()
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end)
+        RefreshPresetDropdownText()
+
+        local function PromptForPresetName(onConfirm)
+            StaticPopupDialogs[addonName .. "PresetNameDialog"] = StaticPopupDialogs[addonName .. "PresetNameDialog"] or {
+                text = "Preset name:",
+                button1 = ACCEPT,
+                button2 = CANCEL,
+                hasEditBox = true,
+                timeout = 0,
+                whileDead = true,
+                hideOnEscape = true,
+                preferredIndex = 3,
+                OnShow = function(dialog, data)
+                    dialog.editBox:SetText((data and data.defaultName) or "")
+                    dialog.editBox:SetFocus()
+                    dialog.editBox:HighlightText()
+                end,
+                OnAccept = function(dialog, data)
+                    local name = dialog.editBox:GetText()
+
+                    if data and data.onConfirm then
+                        data.onConfirm(name)
+                    end
+                end,
+                EditBoxOnEnterPressed = function(editBox)
+                    local parent = editBox:GetParent()
+                    parent.button1:Click()
+                end,
+            }
+
+            StaticPopup_Show(addonName .. "PresetNameDialog", nil, nil, {
+                defaultName = selectedPresetName,
+                onConfirm = onConfirm,
+            })
+        end
+
+        local savePresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        savePresetButton:SetSize(48, 22)
+        savePresetButton:SetPoint("LEFT", presetDropdown, "RIGHT", -2, 2)
+        savePresetButton:SetText("Save")
+        savePresetButton:SetScript("OnClick", function()
+            PromptForPresetName(function(name)
+                if Addon:SavePreset(name) then
+                    selectedPresetName = name
+                    RefreshPresetDropdownText()
+                end
+            end)
+        end)
+
+        local loadPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        loadPresetButton:SetSize(48, 22)
+        loadPresetButton:SetPoint("LEFT", savePresetButton, "RIGHT", 4, 0)
+        loadPresetButton:SetText("Load")
+        loadPresetButton:SetScript("OnClick", function()
+            if selectedPresetName and Addon:LoadPreset(selectedPresetName) then
+                RefreshPresetDropdownText()
+            end
+        end)
+
+        local deletePresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        deletePresetButton:SetSize(52, 22)
+        deletePresetButton:SetPoint("LEFT", loadPresetButton, "RIGHT", 4, 0)
+        deletePresetButton:SetText("Delete")
+        deletePresetButton:SetScript("OnClick", function()
+            if selectedPresetName and Addon:DeletePreset(selectedPresetName) then
+                selectedPresetName = nil
+                RefreshPresetDropdownText()
+            end
+        end)
+
+        local presetIOBox = CreateFrame("EditBox", addonName .. "PresetIOBox", frame, "InputBoxTemplate")
+        presetIOBox:SetAutoFocus(false)
+        presetIOBox:SetSize(236, 20)
+        presetIOBox:SetPoint("TOPLEFT", presetDropdown, "BOTTOMLEFT", 20, -10)
+        presetIOBox:SetTextInsets(4, 4, 2, 2)
+        presetIOBox:SetScript("OnEscapePressed", function(editBox)
+            editBox:ClearFocus()
+        end)
+
+        local exportPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        exportPresetButton:SetSize(52, 22)
+        exportPresetButton:SetPoint("LEFT", presetIOBox, "RIGHT", 6, 0)
+        exportPresetButton:SetText("Export")
+        exportPresetButton:SetScript("OnClick", function()
+            local sourcePreset = Addon.db
+
+            if selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName] then
+                sourcePreset = Addon.db.savedPresets[selectedPresetName]
+            end
+
+            presetIOBox:SetText(Addon:SerializePreset(sourcePreset))
+            presetIOBox:HighlightText()
+            presetIOBox:SetFocus()
+        end)
+
+        local importPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+        importPresetButton:SetSize(52, 22)
+        importPresetButton:SetPoint("LEFT", exportPresetButton, "RIGHT", 4, 0)
+        importPresetButton:SetText("Import")
+        importPresetButton:SetScript("OnClick", function()
+            local importedPreset = Addon:DeserializePreset(presetIOBox:GetText())
+
+            if importedPreset then
+                Addon:ApplyPresetData(importedPreset, nil)
+                selectedPresetName = nil
+                RefreshPresetDropdownText()
+            end
+        end)
+
         local dropdownLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        dropdownLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -24)
+        dropdownLabel:SetPoint("TOPLEFT", presetIOBox, "BOTTOMLEFT", -20, -24)
         dropdownLabel:SetText("Cooldown font")
 
         local fontSelectorButton = CreateFontSelector(frame, dropdownLabel)
