@@ -85,6 +85,9 @@ local actionButtonNamePatterns = {
     "^OverrideActionBarButton%d+$",
     "^ZoneAbilityFrameSpellButton$",
     "^ExtraActionButton%d+$",
+    "^MultiCastActionButton%d+$",
+    "^MultiCastSummonSpellButton$",
+    "^MultiCastRecallSpellButton$",
 }
 
 local blockedFrameNamePatterns = {
@@ -97,7 +100,7 @@ local function CanMatchFrameName(frameName)
         return false
     end
 
-    if issecret and issecret(frameName) then
+    if issecretvalue and issecretvalue(frameName) then
         return false
     end
 
@@ -498,6 +501,13 @@ function Addon:ApplyToCooldown(cooldown)
         cooldown:SetHideCountdownNumbers(false)
     end
 
+    local countdownString = SafeCall(cooldown, "GetCountdownFontString")
+
+    if countdownString then
+        self:ApplyFontToRegion(countdownString, cooldown)
+        return
+    end
+
     local regionIndex = 1
     local region = select(regionIndex, cooldown:GetRegions())
 
@@ -546,6 +556,10 @@ function Addon:RegisterCooldown(cooldown)
 end
 
 function Addon:ScanCooldownFrames()
+    if not EnumerateFrames then
+        return
+    end
+
     local frame = EnumerateFrames()
 
     while frame do

@@ -1,8 +1,8 @@
-## Interface: 120100
+## Interface: 16001
 ## Title: MidnightCC
-## Notes: Reskin cooldown text on action bars without comparing cooldown values.
+## Notes: Reskin cooldown text on action bars in World of Warcraft: Forever without comparing cooldown values.
 ## Author: Skeletor-gh
-## Version: 1.2
+## Version: 1.2-forever
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\MidnightCC\icon
