@@ -1,8 +1,10 @@
-## Interface: 120100
+## Interface: 120100, 120105
 ## Title: MidnightCC
 ## Notes: Reskin cooldown text on action bars without comparing cooldown values.
 ## Author: Skeletor-gh
-## Version: 1.2
+## Version: 1.3
+## X-Date: 2026-10-30
+## X-Compatible-With: 12.1.5
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\MidnightCC\icon

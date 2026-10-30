@@ -23,6 +23,124 @@ local function GetSortedPresetNames()
     return names
 end
 
+local function HasModernDropdown()
+    return MenuUtil ~= nil
+        and C_XMLUtil ~= nil
+        and C_XMLUtil.GetTemplateInfo ~= nil
+        and C_XMLUtil.GetTemplateInfo("WowStyle1DropdownTemplate") ~= nil
+end
+
+-- Creates a single-choice dropdown using the Blizzard Menu system (WowStyle1DropdownTemplate),
+-- falling back to the deprecated UIDropDownMenu API when the modern template is unavailable.
+-- options: getEntries() -> { { text, value } }, isSelected(value), onSelect(value), placeholder, emptyText
+local function CreateDropdown(name, parent, width, options)
+    local dropdown
+
+    if HasModernDropdown() then
+        dropdown = CreateFrame("DropdownButton", name, parent, "WowStyle1DropdownTemplate")
+        dropdown:SetWidth(width + 30)
+        dropdown.leftInset = 0
+
+        if options.placeholder then
+            dropdown:SetDefaultText(options.placeholder)
+        end
+
+        dropdown:SetupMenu(function(_, rootDescription)
+            local entries = options.getEntries()
+
+            if #entries == 0 then
+                rootDescription:CreateTitle(options.emptyText or "")
+                return
+            end
+
+            for _, entry in ipairs(entries) do
+                rootDescription:CreateRadio(entry.text, options.isSelected, options.onSelect, entry.value)
+            end
+        end)
+
+        function dropdown:RefreshSelection()
+            self:GenerateMenu()
+        end
+
+        return dropdown
+    end
+
+    dropdown = CreateFrame("Frame", name, parent, "UIDropDownMenuTemplate")
+    dropdown.leftInset = 16
+    UIDropDownMenu_SetWidth(dropdown, width)
+
+    function dropdown:RefreshSelection()
+        local text = options.placeholder
+
+        for _, entry in ipairs(options.getEntries()) do
+            if options.isSelected(entry.value) then
+                text = entry.text
+                break
+            end
+        end
+
+        UIDropDownMenu_SetText(self, text or "")
+    end
+
+    UIDropDownMenu_Initialize(dropdown, function()
+        local entries = options.getEntries()
+
+        if #entries == 0 then
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = options.emptyText or ""
+            info.disabled = true
+            UIDropDownMenu_AddButton(info)
+            return
+        end
+
+        for _, entry in ipairs(entries) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = entry.text
+            info.checked = options.isSelected(entry.value)
+            info.func = function()
+                options.onSelect(entry.value)
+                dropdown:RefreshSelection()
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+
+    return dropdown
+end
+
+local function GetSliderLabel(slider, key)
+    return slider[key] or _G[slider:GetName() .. key]
+end
+
+local function CreateSettingSlider(name, parent, minValue, maxValue, formatLabel, onChanged)
+    local slider = CreateFrame("Slider", name, parent, "OptionsSliderTemplate")
+    slider:SetWidth(280)
+    slider:SetMinMaxValues(minValue, maxValue)
+    slider:SetValueStep(1)
+    slider:SetObeyStepOnDrag(true)
+
+    GetSliderLabel(slider, "Low"):SetText(tostring(minValue))
+    GetSliderLabel(slider, "High"):SetText(tostring(maxValue))
+
+    slider:SetScript("OnValueChanged", function(_, value)
+        local rounded = math.floor(value + 0.5)
+        GetSliderLabel(slider, "Text"):SetText(formatLabel(rounded))
+
+        if not slider.isRefreshing then
+            onChanged(rounded)
+        end
+    end)
+
+    function slider:SetSettingValue(value)
+        self.isRefreshing = true
+        self:SetValue(value)
+        GetSliderLabel(self, "Text"):SetText(formatLabel(value))
+        self.isRefreshing = false
+    end
+
+    return slider
+end
+
 local function CreateFontSelector(frame, anchor)
     local selectorButton = CreateFrame("Button", addonName .. "FontSelectorButton", frame, "UIPanelButtonTemplate")
     selectorButton:SetSize(220, 24)
@@ -95,13 +213,17 @@ local function CreateFontSelector(frame, anchor)
         content:SetHeight(math.max(#fonts * itemHeight, 1))
     end
 
-    selectorButton:SetText(Addon.db.fontName)
+    function selectorButton:RefreshSelection()
+        self:SetText(Addon.db.fontName)
+    end
+
+    selectorButton:RefreshSelection()
     selectorButton:SetScript("OnClick", function()
         RefreshList()
         listFrame:SetShown(not listFrame:IsShown())
     end)
 
-    frame:SetScript("OnHide", function()
+    frame:HookScript("OnHide", function()
         listFrame:Hide()
     end)
 
@@ -117,13 +239,7 @@ function Addon:CreateOptionsPanel()
     panel.name = addonName
     panel:Hide()
 
-    panel:SetScript("OnShow", function(frame)
-        if frame.initialized then
-            return
-        end
-
-        frame.initialized = true
-
+    local function BuildControls(frame)
         local title = frame:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
         title:SetPoint("TOPLEFT", 16, -16)
         title:SetText("MidnightCC")
@@ -138,46 +254,39 @@ function Addon:CreateOptionsPanel()
         presetLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -22)
         presetLabel:SetText("Presets")
 
-        local presetDropdown = CreateFrame("Frame", addonName .. "PresetDropdown", frame, "UIDropDownMenuTemplate")
-        presetDropdown:SetPoint("TOPLEFT", presetLabel, "BOTTOMLEFT", -16, -2)
+        local presetDropdown = CreateDropdown(addonName .. "PresetDropdown", frame, 130, {
+            placeholder = "(Select preset)",
+            emptyText = "(No presets)",
+            getEntries = function()
+                local entries = {}
+
+                for _, presetName in ipairs(GetSortedPresetNames()) do
+                    entries[#entries + 1] = { text = presetName, value = presetName }
+                end
+
+                return entries
+            end,
+            isSelected = function(presetName)
+                return selectedPresetName == presetName
+            end,
+            onSelect = function(presetName)
+                selectedPresetName = presetName
+            end,
+        })
+        presetDropdown:SetPoint("TOPLEFT", presetLabel, "BOTTOMLEFT", -presetDropdown.leftInset, -2)
 
         local function RefreshPresetDropdownText()
-            if selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName] then
-                UIDropDownMenu_SetText(presetDropdown, selectedPresetName)
-                return
+            if not (selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName]) then
+                selectedPresetName = nil
             end
 
-            selectedPresetName = nil
-            UIDropDownMenu_SetText(presetDropdown, "(Select preset)")
+            presetDropdown:RefreshSelection()
         end
 
-        UIDropDownMenu_SetWidth(presetDropdown, 130)
-        UIDropDownMenu_Initialize(presetDropdown, function()
-            local names = GetSortedPresetNames()
-
-            if #names == 0 then
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = "(No presets)"
-                info.disabled = true
-                UIDropDownMenu_AddButton(info)
-                return
-            end
-
-            for _, presetName in ipairs(names) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = presetName
-                info.checked = (selectedPresetName == presetName)
-                info.func = function()
-                    selectedPresetName = presetName
-                    RefreshPresetDropdownText()
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-        RefreshPresetDropdownText()
-
         local function PromptForPresetName(onConfirm)
-            StaticPopupDialogs[addonName .. "PresetNameDialog"] = StaticPopupDialogs[addonName .. "PresetNameDialog"] or {
+            local dialogName = addonName .. "PresetNameDialog"
+
+            StaticPopupDialogs[dialogName] = StaticPopupDialogs[dialogName] or {
                 text = "Preset name:",
                 button1 = ACCEPT,
                 button2 = CANCEL,
@@ -205,13 +314,28 @@ function Addon:CreateOptionsPanel()
                         data.onConfirm(name)
                     end
                 end,
-                EditBoxOnEnterPressed = function(editBox)
-                    local parent = editBox:GetParent()
-                    parent.button1:Click()
+                EditBoxOnEnterPressed = function(editBox, data)
+                    local dialog = editBox:GetParent()
+                    data = data or (dialog and dialog.data)
+
+                    if data and data.onConfirm then
+                        data.onConfirm(editBox:GetText())
+                    end
+
+                    if dialog then
+                        dialog:Hide()
+                    end
+                end,
+                EditBoxOnEscapePressed = function(editBox)
+                    local dialog = editBox:GetParent()
+
+                    if dialog then
+                        dialog:Hide()
+                    end
                 end,
             }
 
-            StaticPopup_Show(addonName .. "PresetNameDialog", nil, nil, {
+            StaticPopup_Show(dialogName, nil, nil, {
                 defaultName = selectedPresetName,
                 onConfirm = onConfirm,
             })
@@ -219,12 +343,14 @@ function Addon:CreateOptionsPanel()
 
         local savePresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         savePresetButton:SetSize(48, 22)
-        savePresetButton:SetPoint("LEFT", presetDropdown, "RIGHT", -2, 2)
+        savePresetButton:SetPoint("LEFT", presetDropdown, "RIGHT", presetDropdown.leftInset > 0 and -2 or 8, presetDropdown.leftInset > 0 and 2 or 0)
         savePresetButton:SetText("Save")
         savePresetButton:SetScript("OnClick", function()
             PromptForPresetName(function(name)
-                if Addon:SavePreset(name) then
-                    selectedPresetName = name
+                local savedName = Addon:SavePreset(name)
+
+                if savedName then
+                    selectedPresetName = savedName
                     RefreshPresetDropdownText()
                 end
             end)
@@ -236,7 +362,7 @@ function Addon:CreateOptionsPanel()
         loadPresetButton:SetText("Load")
         loadPresetButton:SetScript("OnClick", function()
             if selectedPresetName and Addon:LoadPreset(selectedPresetName) then
-                RefreshPresetDropdownText()
+                frame:RefreshControls()
             end
         end)
 
@@ -254,7 +380,7 @@ function Addon:CreateOptionsPanel()
         local presetIOBox = CreateFrame("EditBox", addonName .. "PresetIOBox", frame, "InputBoxTemplate")
         presetIOBox:SetAutoFocus(false)
         presetIOBox:SetSize(236, 20)
-        presetIOBox:SetPoint("TOPLEFT", presetDropdown, "BOTTOMLEFT", 20, -10)
+        presetIOBox:SetPoint("TOPLEFT", presetLabel, "BOTTOMLEFT", 4, -46)
         presetIOBox:SetTextInsets(4, 4, 2, 2)
         presetIOBox:SetScript("OnEscapePressed", function(editBox)
             editBox:ClearFocus()
@@ -283,15 +409,14 @@ function Addon:CreateOptionsPanel()
         importPresetButton:SetScript("OnClick", function()
             local importedPreset = Addon:DeserializePreset(presetIOBox:GetText())
 
-            if importedPreset then
-                Addon:ApplyPresetData(importedPreset, nil)
+            if importedPreset and Addon:ApplyPresetData(importedPreset, nil) then
                 selectedPresetName = nil
-                RefreshPresetDropdownText()
+                frame:RefreshControls()
             end
         end)
 
         local dropdownLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        dropdownLabel:SetPoint("TOPLEFT", presetIOBox, "BOTTOMLEFT", -20, -24)
+        dropdownLabel:SetPoint("TOPLEFT", presetIOBox, "BOTTOMLEFT", -4, -24)
         dropdownLabel:SetText("Cooldown font")
 
         local fontSelectorButton = CreateFontSelector(frame, dropdownLabel)
@@ -300,103 +425,72 @@ function Addon:CreateOptionsPanel()
         fontStyleLabel:SetPoint("TOPLEFT", fontSelectorButton, "BOTTOMLEFT", 0, -24)
         fontStyleLabel:SetText("Cooldown font format")
 
-        local fontStyleDropdown = CreateFrame("Frame", addonName .. "FontStyleDropdown", frame, "UIDropDownMenuTemplate")
-        fontStyleDropdown:SetPoint("TOPLEFT", fontStyleLabel, "BOTTOMLEFT", -16, -4)
+        local fontStyleDropdown = CreateDropdown(addonName .. "FontStyleDropdown", frame, 180, {
+            getEntries = function()
+                local entries = {}
 
-        UIDropDownMenu_SetWidth(fontStyleDropdown, 180)
-        UIDropDownMenu_Initialize(fontStyleDropdown, function()
-            for _, styleKey in ipairs(Addon.fontStyleOrder) do
-                local styleData = Addon.fontStyles[styleKey]
+                for _, styleKey in ipairs(Addon.fontStyleOrder) do
+                    local styleData = Addon.fontStyles[styleKey]
 
-                if styleData then
-                    local info = UIDropDownMenu_CreateInfo()
-                    info.text = styleData.label
-                    info.checked = (Addon.db.fontStyle == styleKey)
-                    info.func = function()
-                        UIDropDownMenu_SetSelectedName(fontStyleDropdown, styleData.label)
-                        Addon:SetFontStyle(styleKey)
+                    if styleData then
+                        entries[#entries + 1] = { text = styleData.label, value = styleKey }
                     end
-                    UIDropDownMenu_AddButton(info)
                 end
-            end
-        end)
-        UIDropDownMenu_SetSelectedName(fontStyleDropdown, GetFontStyleLabel(Addon.db.fontStyle or Addon.defaults.fontStyle))
+
+                return entries
+            end,
+            isSelected = function(styleKey)
+                return (Addon.db.fontStyle or Addon.defaults.fontStyle) == styleKey
+            end,
+            onSelect = function(styleKey)
+                Addon:SetFontStyle(styleKey)
+            end,
+        })
+        fontStyleDropdown:SetPoint("TOPLEFT", fontStyleLabel, "BOTTOMLEFT", -fontStyleDropdown.leftInset, -4)
 
         local anchorLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        anchorLabel:SetPoint("TOPLEFT", fontStyleDropdown, "BOTTOMLEFT", 16, -24)
+        anchorLabel:SetPoint("TOPLEFT", fontStyleLabel, "BOTTOMLEFT", 0, -60)
         anchorLabel:SetText("Cooldown anchor")
 
-        local anchorDropdown = CreateFrame("Frame", addonName .. "AnchorDropdown", frame, "UIDropDownMenuTemplate")
-        anchorDropdown:SetPoint("TOPLEFT", anchorLabel, "BOTTOMLEFT", -16, -4)
+        local anchorDropdown = CreateDropdown(addonName .. "AnchorDropdown", frame, 140, {
+            getEntries = function()
+                local entries = {}
 
-        UIDropDownMenu_SetWidth(anchorDropdown, 140)
-        UIDropDownMenu_Initialize(anchorDropdown, function()
-            for _, anchor in ipairs({ "top", "center", "bottom" }) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = anchorLabels[anchor]
-                info.checked = (Addon.db.anchor == anchor)
-                info.func = function()
-                    UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[anchor])
-                    Addon:SetAnchor(anchor)
+                for _, anchor in ipairs({ "top", "center", "bottom" }) do
+                    entries[#entries + 1] = { text = anchorLabels[anchor], value = anchor }
                 end
-                UIDropDownMenu_AddButton(info)
-            end
+
+                return entries
+            end,
+            isSelected = function(anchor)
+                return (Addon.db.anchor or Addon.defaults.anchor) == anchor
+            end,
+            onSelect = function(anchor)
+                Addon:SetAnchor(anchor)
+            end,
+        })
+        anchorDropdown:SetPoint("TOPLEFT", anchorLabel, "BOTTOMLEFT", -anchorDropdown.leftInset, -4)
+
+        local slider = CreateSettingSlider(addonName .. "SizeSlider", frame, 8, 48, function(value)
+            return "Cooldown font size: " .. value
+        end, function(value)
+            Addon:SetFontSize(value)
         end)
-        UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[Addon.db.anchor] or anchorLabels.center)
+        slider:SetPoint("TOPLEFT", anchorLabel, "BOTTOMLEFT", 4, -64)
 
-        local slider = CreateFrame("Slider", addonName .. "SizeSlider", frame, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", anchorDropdown, "BOTTOMLEFT", 20, -28)
-        slider:SetWidth(280)
-        slider:SetMinMaxValues(8, 48)
-        slider:SetValueStep(1)
-        slider:SetObeyStepOnDrag(true)
-        slider:SetValue(Addon.db.fontSize)
-
-        _G[slider:GetName() .. "Low"]:SetText("8")
-        _G[slider:GetName() .. "High"]:SetText("48")
-        _G[slider:GetName() .. "Text"]:SetText("Cooldown font size: " .. Addon.db.fontSize)
-
-        slider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[slider:GetName() .. "Text"]:SetText("Cooldown font size: " .. rounded)
-            Addon:SetFontSize(rounded)
+        local offsetXSlider = CreateSettingSlider(addonName .. "OffsetXSlider", frame, -10, 10, function(value)
+            return "Cooldown X offset: " .. value .. "px"
+        end, function(value)
+            Addon:SetOffsets(value, Addon.db.offsetY or 0)
         end)
-
-        local offsetXSlider = CreateFrame("Slider", addonName .. "OffsetXSlider", frame, "OptionsSliderTemplate")
         offsetXSlider:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", 0, -40)
-        offsetXSlider:SetWidth(280)
-        offsetXSlider:SetMinMaxValues(-10, 10)
-        offsetXSlider:SetValueStep(1)
-        offsetXSlider:SetObeyStepOnDrag(true)
-        offsetXSlider:SetValue(Addon.db.offsetX or 0)
 
-        _G[offsetXSlider:GetName() .. "Low"]:SetText("-10")
-        _G[offsetXSlider:GetName() .. "High"]:SetText("10")
-        _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. (Addon.db.offsetX or 0) .. "px")
-
-        offsetXSlider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. rounded .. "px")
-            Addon:SetOffsets(rounded, Addon.db.offsetY or 0)
+        local offsetYSlider = CreateSettingSlider(addonName .. "OffsetYSlider", frame, -10, 10, function(value)
+            return "Cooldown Y offset: " .. value .. "px"
+        end, function(value)
+            Addon:SetOffsets(Addon.db.offsetX or 0, value)
         end)
-
-        local offsetYSlider = CreateFrame("Slider", addonName .. "OffsetYSlider", frame, "OptionsSliderTemplate")
         offsetYSlider:SetPoint("TOPLEFT", offsetXSlider, "BOTTOMLEFT", 0, -28)
-        offsetYSlider:SetWidth(280)
-        offsetYSlider:SetMinMaxValues(-10, 10)
-        offsetYSlider:SetValueStep(1)
-        offsetYSlider:SetObeyStepOnDrag(true)
-        offsetYSlider:SetValue(Addon.db.offsetY or 0)
-
-        _G[offsetYSlider:GetName() .. "Low"]:SetText("-10")
-        _G[offsetYSlider:GetName() .. "High"]:SetText("10")
-        _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. (Addon.db.offsetY or 0) .. "px")
-
-        offsetYSlider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. rounded .. "px")
-            Addon:SetOffsets(Addon.db.offsetX or 0, rounded)
-        end)
 
         local refreshButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
         refreshButton:SetSize(140, 24)
@@ -405,6 +499,26 @@ function Addon:CreateOptionsPanel()
         refreshButton:SetScript("OnClick", function()
             Addon:RefreshAllCooldowns()
         end)
+
+        -- Re-sync every control with the saved settings (after a preset load/import or reopening the panel).
+        function frame:RefreshControls()
+            RefreshPresetDropdownText()
+            fontSelectorButton:RefreshSelection()
+            fontStyleDropdown:RefreshSelection()
+            anchorDropdown:RefreshSelection()
+            slider:SetSettingValue(Addon.db.fontSize or Addon.defaults.fontSize)
+            offsetXSlider:SetSettingValue(Addon.db.offsetX or 0)
+            offsetYSlider:SetSettingValue(Addon.db.offsetY or 0)
+        end
+    end
+
+    panel:SetScript("OnShow", function(frame)
+        if not frame.initialized then
+            frame.initialized = true
+            BuildControls(frame)
+        end
+
+        frame:RefreshControls()
     end)
 
     self.optionsPanel = panel
@@ -413,20 +527,12 @@ function Addon:CreateOptionsPanel()
         local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name, panel.name)
         Settings.RegisterAddOnCategory(category)
         self.settingsCategoryID = category:GetID()
-    elseif InterfaceOptions_AddCategory then
-        InterfaceOptions_AddCategory(panel)
     end
 
     SLASH_MIDNIGHTCC1 = "/midnightcc"
     SlashCmdList["MIDNIGHTCC"] = function()
         if Settings and Settings.OpenToCategory and Addon.settingsCategoryID then
             Settings.OpenToCategory(Addon.settingsCategoryID)
-            return
-        end
-
-        if InterfaceOptionsFrame_OpenToCategory then
-            InterfaceOptionsFrame_OpenToCategory(panel)
-            InterfaceOptionsFrame_OpenToCategory(panel)
         end
     end
 end

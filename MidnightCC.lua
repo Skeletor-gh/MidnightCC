@@ -97,7 +97,10 @@ local function CanMatchFrameName(frameName)
         return false
     end
 
-    if issecret and issecret(frameName) then
+    -- Midnight exposes issecretvalue(); keep issecret() as a fallback for early 12.0 builds.
+    local isSecretValue = issecretvalue or issecret
+
+    if isSecretValue and isSecretValue(frameName) then
         return false
     end
 
@@ -242,12 +245,43 @@ local function BuildPresetData(source, defaults)
     return preset
 end
 
+local function ClampNumber(value, minValue, maxValue, fallback)
+    local number = tonumber(value)
+
+    if not number then
+        return fallback
+    end
+
+    number = math.floor(number + 0.5)
+    return math.max(minValue, math.min(maxValue, number))
+end
+
+local function SanitizePresetData(preset, defaults)
+    preset.fontSize = ClampNumber(preset.fontSize, 8, 48, defaults.fontSize)
+    preset.offsetX = ClampNumber(preset.offsetX, -10, 10, defaults.offsetX)
+    preset.offsetY = ClampNumber(preset.offsetY, -10, 10, defaults.offsetY)
+
+    if type(preset.fontName) ~= "string" then
+        preset.fontName = defaults.fontName
+    end
+
+    if not Addon.fontStyles[preset.fontStyle] then
+        preset.fontStyle = defaults.fontStyle
+    end
+
+    if not Addon.anchorPoints[preset.anchor] then
+        preset.anchor = defaults.anchor
+    end
+
+    return preset
+end
+
 function Addon:ApplyPresetData(presetData, presetName)
     if type(presetData) ~= "table" then
         return false
     end
 
-    local sanitizedPreset = BuildPresetData(presetData, self.defaults)
+    local sanitizedPreset = SanitizePresetData(BuildPresetData(presetData, self.defaults), self.defaults)
 
     for _, field in ipairs(self.presetFields) do
         self.db[field] = sanitizedPreset[field]
@@ -348,7 +382,7 @@ function Addon:SavePreset(name)
     self.db.savedPresets = self.db.savedPresets or {}
     self.db.savedPresets[presetName] = BuildPresetData(self.db, self.defaults)
     self.db.activePreset = presetName
-    return true
+    return presetName
 end
 
 function Addon:LoadPreset(name)
@@ -673,35 +707,21 @@ function Addon:InitializeSharedMedia()
 end
 
 function Addon:SetFontSize(fontSize)
-    local size = tonumber(fontSize)
-
-    if not size then
+    if not tonumber(fontSize) then
         return
     end
 
-    size = math.floor(size + 0.5)
-    size = math.max(8, math.min(48, size))
-
-    self.db.fontSize = size
+    self.db.fontSize = ClampNumber(fontSize, 8, 48, self.defaults.fontSize)
     self:RefreshAllCooldowns()
 end
 
 function Addon:SetOffsets(offsetX, offsetY)
-    local x = tonumber(offsetX)
-    local y = tonumber(offsetY)
-
-    if not x or not y then
+    if not tonumber(offsetX) or not tonumber(offsetY) then
         return
     end
 
-    x = math.floor(x + 0.5)
-    y = math.floor(y + 0.5)
-
-    x = math.max(-10, math.min(10, x))
-    y = math.max(-10, math.min(10, y))
-
-    self.db.offsetX = x
-    self.db.offsetY = y
+    self.db.offsetX = ClampNumber(offsetX, -10, 10, self.defaults.offsetX)
+    self.db.offsetY = ClampNumber(offsetY, -10, 10, self.defaults.offsetY)
     self:RefreshAllCooldowns()
 end
 
