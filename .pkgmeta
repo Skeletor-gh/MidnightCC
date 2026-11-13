@@ -1,0 +1,4 @@
+package-as: MidnightCC
+
+ignore:
+  - tests
