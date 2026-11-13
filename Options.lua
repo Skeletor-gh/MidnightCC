@@ -1,111 +1,329 @@
 local addonName = ...
 local Addon = MidnightCC
 
-local anchorLabels = {
-    top = "Top",
-    center = "Center",
-    bottom = "Bottom",
-}
+local COLUMN_WIDTH = 300
+local LEFT_X = 16
+local RIGHT_X = 350
+local SLIDER_WIDTH = 260
 
-local function GetFontStyleLabel(styleKey)
-    local style = Addon.fontStyles and Addon.fontStyles[styleKey]
-    return style and style.label or "Outline"
-end
+---------------------------------------------------------------------------
+-- Small widget helpers
+---------------------------------------------------------------------------
 
-local function GetSortedPresetNames()
-    local names = {}
+local function CreateHeader(parent, text, anchorFrame, x, y)
+    local header = parent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    header:SetText(text)
 
-    for presetName in pairs(Addon.db.savedPresets or {}) do
-        names[#names + 1] = presetName
+    if anchorFrame then
+        header:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", x or 0, y or -18)
     end
 
-    table.sort(names)
-    return names
+    return header
 end
 
-local function CreateFontSelector(frame, anchor)
-    local selectorButton = CreateFrame("Button", addonName .. "FontSelectorButton", frame, "UIPanelButtonTemplate")
-    selectorButton:SetSize(220, 24)
-    selectorButton:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
+local function CreateButton(parent, text, width, onClick)
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetSize(width, 22)
+    button:SetText(text)
+    button:SetScript("OnClick", onClick)
+    return button
+end
 
-    local listFrame = CreateFrame("Frame", addonName .. "FontSelectorList", frame)
-    listFrame:SetSize(248, 170)
-    listFrame:SetPoint("TOPLEFT", selectorButton, "BOTTOMLEFT", 0, -2)
-    listFrame:SetFrameStrata("DIALOG")
-    listFrame:Hide()
+local function CreateInputBox(parent, width)
+    local editBox = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+    editBox:SetAutoFocus(false)
+    editBox:SetSize(width, 20)
+    editBox:SetTextInsets(2, 2, 0, 0)
+    editBox:SetScript("OnEscapePressed", editBox.ClearFocus)
+    return editBox
+end
 
-    local background = listFrame:CreateTexture(nil, "BACKGROUND")
-    background:SetAllPoints()
-    background:SetColorTexture(0, 0, 0, 0.9)
+local function CreateDropdown(parent, width, generator)
+    local dropdown = CreateFrame("DropdownButton", nil, parent, "WowStyle1DropdownTemplate")
+    dropdown:SetWidth(width)
+    dropdown:SetupMenu(generator)
+    return dropdown
+end
 
-    local inset = listFrame:CreateTexture(nil, "BORDER")
-    inset:SetPoint("TOPLEFT", 1, -1)
-    inset:SetPoint("BOTTOMRIGHT", -1, 1)
-    inset:SetColorTexture(0.05, 0.05, 0.05, 0.95)
+-- Labeled slider built on Blizzard's current MinimalSliderWithSteppers template
+-- (OptionsSliderTemplate now lives in DeprecatedTemplates.xml).
+local function CreateSlider(parent, label, minValue, maxValue, formatValue, onChange)
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetSize(SLIDER_WIDTH, 44)
 
-    local scrollFrame = CreateFrame("ScrollFrame", addonName .. "FontSelectorScroll", listFrame, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 8, -8)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
+    container.Label = container:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    container.Label:SetPoint("TOPLEFT", 0, 0)
+    container.Label:SetText(label)
 
-    local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(212, 1)
-    scrollFrame:SetScrollChild(content)
+    local slider = CreateFrame("Frame", nil, container, "MinimalSliderWithSteppersTemplate")
+    slider:SetPoint("TOPLEFT", container.Label, "BOTTOMLEFT", -4, -2)
+    slider:SetWidth(SLIDER_WIDTH - 40)
 
-    local itemHeight = 20
-    local function RefreshList()
-        local fonts = Addon:GetSortedFontNames()
+    local formatters = {
+        [MinimalSliderWithSteppersMixin.Label.Right] = CreateMinimalSliderFormatter(MinimalSliderWithSteppersMixin.Label.Right, formatValue),
+    }
 
-        for index, fontName in ipairs(fonts) do
-            local button = content.buttons and content.buttons[index]
+    slider:Init(minValue, minValue, maxValue, maxValue - minValue, formatters)
+    slider:RegisterCallback(MinimalSliderWithSteppersMixin.Event.OnValueChanged, function(_, value)
+        onChange(math.floor(value + 0.5))
+    end, container)
 
-            if not button then
-                content.buttons = content.buttons or {}
-                button = CreateFrame("Button", nil, content)
-                button:SetSize(212, itemHeight)
-
-                button.text = button:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-                button.text:SetPoint("LEFT", 6, 0)
-                button.text:SetPoint("RIGHT", -6, 0)
-                button.text:SetJustifyH("LEFT")
-
-                button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
-                button.highlight:SetAllPoints()
-                button.highlight:SetColorTexture(1, 1, 1, 0.1)
-
-                content.buttons[index] = button
-            end
-
-            button:SetPoint("TOPLEFT", 0, -((index - 1) * itemHeight))
-            button.text:SetText(fontName)
-            button:Show()
-
-            button:SetScript("OnClick", function()
-                Addon:SetFontName(fontName)
-                selectorButton:SetText(fontName)
-                listFrame:Hide()
-            end)
-        end
-
-        if content.buttons then
-            for index = #fonts + 1, #content.buttons do
-                content.buttons[index]:Hide()
-            end
-        end
-
-        content:SetHeight(math.max(#fonts * itemHeight, 1))
+    function container:SetValue(value)
+        slider:SetValue(value)
     end
 
-    selectorButton:SetText(Addon.db.fontName)
-    selectorButton:SetScript("OnClick", function()
-        RefreshList()
-        listFrame:SetShown(not listFrame:IsShown())
+    return container
+end
+
+local function CreateCheckbox(parent, label, tooltip, onClick)
+    local checkbox = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+    checkbox:SetSize(26, 26)
+
+    checkbox.Label = checkbox:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    checkbox.Label:SetPoint("LEFT", checkbox, "RIGHT", 2, 1)
+    checkbox.Label:SetText(label)
+
+    checkbox:SetScript("OnClick", function(button)
+        onClick(button:GetChecked())
     end)
 
-    frame:SetScript("OnHide", function()
-        listFrame:Hide()
-    end)
+    if tooltip then
+        checkbox:SetScript("OnEnter", function(button)
+            GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+            GameTooltip:SetText(label, 1, 1, 1)
+            GameTooltip:AddLine(tooltip, nil, nil, nil, true)
+            GameTooltip:Show()
+        end)
+        checkbox:SetScript("OnLeave", GameTooltip_Hide)
+    end
 
-    return selectorButton
+    return checkbox
+end
+
+---------------------------------------------------------------------------
+-- Panel construction
+---------------------------------------------------------------------------
+
+local function BuildAppearanceColumn(panel, anchor)
+    local controls = {}
+
+    local fontHeader = CreateHeader(panel, "Cooldown font", anchor, 0, -24)
+    controls.font = CreateDropdown(panel, 220, function(_, root)
+        root:SetScrollMode(20 * 14)
+
+        for _, fontName in ipairs(Addon:GetSortedFontNames()) do
+            root:CreateRadio(fontName, function(name)
+                return Addon.db.fontName == name
+            end, function(name)
+                Addon:SetFontName(name)
+            end, fontName)
+        end
+    end)
+    controls.font:SetPoint("TOPLEFT", fontHeader, "BOTTOMLEFT", 0, -6)
+
+    local styleHeader = CreateHeader(panel, "Font format", controls.font)
+    controls.style = CreateDropdown(panel, 220, function(_, root)
+        for _, styleKey in ipairs(Addon.fontStyleOrder) do
+            root:CreateRadio(Addon.fontStyles[styleKey].label, function(key)
+                return Addon.db.fontStyle == key
+            end, function(key)
+                Addon:SetFontStyle(key)
+            end, styleKey)
+        end
+    end)
+    controls.style:SetPoint("TOPLEFT", styleHeader, "BOTTOMLEFT", 0, -6)
+
+    local anchorHeader = CreateHeader(panel, "Position on button", controls.style)
+    controls.anchor = CreateDropdown(panel, 220, function(_, root)
+        for _, anchorKey in ipairs(Addon.anchorOrder) do
+            root:CreateRadio(Addon.anchorLabels[anchorKey], function(key)
+                return Addon.db.anchor == key
+            end, function(key)
+                Addon:SetAnchor(key)
+            end, anchorKey)
+        end
+    end)
+    controls.anchor:SetPoint("TOPLEFT", anchorHeader, "BOTTOMLEFT", 0, -6)
+
+    local limits = Addon.limits
+
+    controls.size = CreateSlider(panel, "Font size", limits.fontSize.min, limits.fontSize.max, function(value)
+        return tostring(math.floor(value + 0.5))
+    end, function(value)
+        Addon:SetFontSize(value)
+    end)
+    controls.size:SetPoint("TOPLEFT", controls.anchor, "BOTTOMLEFT", 0, -20)
+
+    local function FormatOffset(value)
+        return math.floor(value + 0.5) .. " px"
+    end
+
+    controls.offsetX = CreateSlider(panel, "Horizontal offset", limits.offset.min, limits.offset.max, FormatOffset, function(value)
+        Addon:SetOffsetX(value)
+    end)
+    controls.offsetX:SetPoint("TOPLEFT", controls.size, "BOTTOMLEFT", 0, -10)
+
+    controls.offsetY = CreateSlider(panel, "Vertical offset", limits.offset.min, limits.offset.max, FormatOffset, function(value)
+        Addon:SetOffsetY(value)
+    end)
+    controls.offsetY:SetPoint("TOPLEFT", controls.offsetX, "BOTTOMLEFT", 0, -10)
+
+    controls.showNumbers = CreateCheckbox(panel, "Always show cooldown numbers",
+        "Shows countdown numbers on action buttons even when Blizzard's \"Show Numbers for Cooldowns\" option (Options > Gameplay > Combat) is off. Untick to follow Blizzard's setting.",
+        function(checked)
+            Addon:SetShowNumbers(checked)
+        end)
+    controls.showNumbers:SetPoint("TOPLEFT", controls.offsetY, "BOTTOMLEFT", -4, -14)
+
+    return controls
+end
+
+local function BuildPreview(panel, controls)
+    local preview = CreateFrame("Frame", nil, panel)
+    preview:SetSize(45, 45)
+
+    local icon = preview:CreateTexture(nil, "ARTWORK")
+    icon:SetAllPoints()
+    icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    icon:SetDesaturated(true)
+    icon:SetVertexColor(0.6, 0.6, 0.6)
+
+    local text = preview:CreateFontString(nil, "OVERLAY")
+    text:SetFontObject(GameFontHighlight)
+    text:SetText("12")
+    text:SetTextColor(1, 1, 1)
+
+    controls.preview = function()
+        Addon:ApplyFontToRegion(text, preview)
+    end
+
+    return preview
+end
+
+local function BuildPresetColumn(panel, anchor, refreshControls)
+    local controls = {}
+    local selectedPreset = Addon.db.activePreset
+
+    local header = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    header:SetPoint("TOPLEFT", anchor, "TOPLEFT", RIGHT_X - LEFT_X, -24)
+    header:SetText("Presets")
+
+    local status = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+    status:SetJustifyH("LEFT")
+    status:SetWidth(COLUMN_WIDTH)
+
+    local function SetStatus(message, isError)
+        status:SetText(message or "")
+
+        if isError then
+            status:SetTextColor(1, 0.3, 0.3)
+        else
+            status:SetTextColor(0.6, 0.9, 0.6)
+        end
+    end
+
+    controls.presets = CreateDropdown(panel, 220, function(_, root)
+        local names = Addon:GetSortedPresetNames()
+
+        if #names == 0 then
+            root:CreateTitle("No saved presets yet")
+            return
+        end
+
+        for _, presetName in ipairs(names) do
+            root:CreateRadio(presetName, function(name)
+                return selectedPreset == name
+            end, function(name)
+                selectedPreset = name
+                controls.name:SetText(name)
+            end, presetName)
+        end
+    end)
+    controls.presets:SetDefaultText("Select a preset")
+    controls.presets:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -6)
+
+    local loadButton = CreateButton(panel, "Load", 70, function()
+        if selectedPreset and Addon:LoadPreset(selectedPreset) then
+            SetStatus("Loaded \"" .. selectedPreset .. "\".")
+        else
+            SetStatus("Select a preset to load.", true)
+        end
+    end)
+    loadButton:SetPoint("TOPLEFT", controls.presets, "BOTTOMLEFT", 0, -8)
+
+    local deleteButton = CreateButton(panel, "Delete", 70, function()
+        if selectedPreset and Addon:DeletePreset(selectedPreset) then
+            SetStatus("Deleted \"" .. selectedPreset .. "\".")
+            selectedPreset = nil
+            controls.name:SetText("")
+            refreshControls()
+        else
+            SetStatus("Select a preset to delete.", true)
+        end
+    end)
+    deleteButton:SetPoint("LEFT", loadButton, "RIGHT", 6, 0)
+
+    local nameHeader = CreateHeader(panel, "Save current settings as", loadButton, 0, -18)
+    controls.name = CreateInputBox(panel, 180)
+    controls.name:SetPoint("TOPLEFT", nameHeader, "BOTTOMLEFT", 6, -6)
+    controls.name:SetMaxLetters(48)
+
+    local function SaveFromInput()
+        local savedName = Addon:SavePreset(controls.name:GetText())
+
+        if savedName then
+            selectedPreset = savedName
+            controls.name:SetText(savedName)
+            controls.name:ClearFocus()
+            SetStatus("Saved \"" .. savedName .. "\".")
+            refreshControls()
+        else
+            SetStatus("Enter a preset name first.", true)
+        end
+    end
+
+    controls.name:SetScript("OnEnterPressed", SaveFromInput)
+
+    local saveButton = CreateButton(panel, "Save", 70, SaveFromInput)
+    saveButton:SetPoint("LEFT", controls.name, "RIGHT", 6, 0)
+
+    local ioHeader = CreateHeader(panel, "Import / export string", controls.name, -6, -18)
+    controls.io = CreateInputBox(panel, 260)
+    controls.io:SetPoint("TOPLEFT", ioHeader, "BOTTOMLEFT", 6, -6)
+    controls.io:SetScript("OnEditFocusGained", controls.io.HighlightText)
+
+    local exportButton = CreateButton(panel, "Export", 80, function()
+        local source = selectedPreset and Addon:GetPreset(selectedPreset) or Addon.db
+        controls.io:SetText(Addon:SerializePreset(source))
+        controls.io:SetFocus()
+        controls.io:HighlightText()
+        SetStatus("Copy the string with Ctrl+C.")
+    end)
+    exportButton:SetPoint("TOPLEFT", controls.io, "BOTTOMLEFT", -6, -8)
+
+    local importButton = CreateButton(panel, "Import", 80, function()
+        local preset = Addon:DeserializePreset(controls.io:GetText())
+
+        if preset then
+            Addon:ApplyPresetData(preset, nil)
+            selectedPreset = nil
+            controls.io:ClearFocus()
+            SetStatus("Imported settings. Save them as a preset to keep them.")
+        else
+            SetStatus("That doesn't look like a MidnightCC string.", true)
+        end
+    end)
+    importButton:SetPoint("LEFT", exportButton, "RIGHT", 6, 0)
+
+    status:SetPoint("TOPLEFT", exportButton, "BOTTOMLEFT", 0, -10)
+
+    controls.validateSelection = function()
+        if selectedPreset and not Addon:GetPreset(selectedPreset) then
+            selectedPreset = nil
+        end
+    end
+
+    return controls
 end
 
 function Addon:CreateOptionsPanel()
@@ -113,320 +331,82 @@ function Addon:CreateOptionsPanel()
         return
     end
 
-    local panel = CreateFrame("Frame", addonName .. "OptionsPanel", UIParent)
+    local panel = CreateFrame("Frame", addonName .. "OptionsPanel")
     panel.name = addonName
     panel:Hide()
-
-    panel:SetScript("OnShow", function(frame)
-        if frame.initialized then
-            return
-        end
-
-        frame.initialized = true
-
-        local title = frame:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-        title:SetPoint("TOPLEFT", 16, -16)
-        title:SetText("MidnightCC")
-
-        local subtitle = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-        subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-        subtitle:SetText("Reskin cooldown number fonts only (no cooldown value comparisons).")
-
-        local selectedPresetName = Addon.db.activePreset
-
-        local presetLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        presetLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -22)
-        presetLabel:SetText("Presets")
-
-        local presetDropdown = CreateFrame("Frame", addonName .. "PresetDropdown", frame, "UIDropDownMenuTemplate")
-        presetDropdown:SetPoint("TOPLEFT", presetLabel, "BOTTOMLEFT", -16, -2)
-
-        local function RefreshPresetDropdownText()
-            if selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName] then
-                UIDropDownMenu_SetText(presetDropdown, selectedPresetName)
-                return
-            end
-
-            selectedPresetName = nil
-            UIDropDownMenu_SetText(presetDropdown, "(Select preset)")
-        end
-
-        UIDropDownMenu_SetWidth(presetDropdown, 130)
-        UIDropDownMenu_Initialize(presetDropdown, function()
-            local names = GetSortedPresetNames()
-
-            if #names == 0 then
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = "(No presets)"
-                info.disabled = true
-                UIDropDownMenu_AddButton(info)
-                return
-            end
-
-            for _, presetName in ipairs(names) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = presetName
-                info.checked = (selectedPresetName == presetName)
-                info.func = function()
-                    selectedPresetName = presetName
-                    RefreshPresetDropdownText()
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-        RefreshPresetDropdownText()
-
-        local function PromptForPresetName(onConfirm)
-            StaticPopupDialogs[addonName .. "PresetNameDialog"] = StaticPopupDialogs[addonName .. "PresetNameDialog"] or {
-                text = "Preset name:",
-                button1 = ACCEPT,
-                button2 = CANCEL,
-                hasEditBox = true,
-                timeout = 0,
-                whileDead = true,
-                hideOnEscape = true,
-                preferredIndex = 3,
-                OnShow = function(dialog, data)
-                    local editBox = dialog.EditBox or dialog.editBox
-
-                    if not editBox then
-                        return
-                    end
-
-                    editBox:SetText((data and data.defaultName) or "")
-                    editBox:SetFocus()
-                    editBox:HighlightText()
-                end,
-                OnAccept = function(dialog, data)
-                    local editBox = dialog.EditBox or dialog.editBox
-                    local name = editBox and editBox:GetText() or nil
-
-                    if data and data.onConfirm then
-                        data.onConfirm(name)
-                    end
-                end,
-                EditBoxOnEnterPressed = function(editBox)
-                    local parent = editBox:GetParent()
-                    parent.button1:Click()
-                end,
-            }
-
-            StaticPopup_Show(addonName .. "PresetNameDialog", nil, nil, {
-                defaultName = selectedPresetName,
-                onConfirm = onConfirm,
-            })
-        end
-
-        local savePresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        savePresetButton:SetSize(48, 22)
-        savePresetButton:SetPoint("LEFT", presetDropdown, "RIGHT", -2, 2)
-        savePresetButton:SetText("Save")
-        savePresetButton:SetScript("OnClick", function()
-            PromptForPresetName(function(name)
-                if Addon:SavePreset(name) then
-                    selectedPresetName = name
-                    RefreshPresetDropdownText()
-                end
-            end)
-        end)
-
-        local loadPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        loadPresetButton:SetSize(48, 22)
-        loadPresetButton:SetPoint("LEFT", savePresetButton, "RIGHT", 4, 0)
-        loadPresetButton:SetText("Load")
-        loadPresetButton:SetScript("OnClick", function()
-            if selectedPresetName and Addon:LoadPreset(selectedPresetName) then
-                RefreshPresetDropdownText()
-            end
-        end)
-
-        local deletePresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        deletePresetButton:SetSize(52, 22)
-        deletePresetButton:SetPoint("LEFT", loadPresetButton, "RIGHT", 4, 0)
-        deletePresetButton:SetText("Delete")
-        deletePresetButton:SetScript("OnClick", function()
-            if selectedPresetName and Addon:DeletePreset(selectedPresetName) then
-                selectedPresetName = nil
-                RefreshPresetDropdownText()
-            end
-        end)
-
-        local presetIOBox = CreateFrame("EditBox", addonName .. "PresetIOBox", frame, "InputBoxTemplate")
-        presetIOBox:SetAutoFocus(false)
-        presetIOBox:SetSize(236, 20)
-        presetIOBox:SetPoint("TOPLEFT", presetDropdown, "BOTTOMLEFT", 20, -10)
-        presetIOBox:SetTextInsets(4, 4, 2, 2)
-        presetIOBox:SetScript("OnEscapePressed", function(editBox)
-            editBox:ClearFocus()
-        end)
-
-        local exportPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        exportPresetButton:SetSize(52, 22)
-        exportPresetButton:SetPoint("LEFT", presetIOBox, "RIGHT", 6, 0)
-        exportPresetButton:SetText("Export")
-        exportPresetButton:SetScript("OnClick", function()
-            local sourcePreset = Addon.db
-
-            if selectedPresetName and Addon.db.savedPresets and Addon.db.savedPresets[selectedPresetName] then
-                sourcePreset = Addon.db.savedPresets[selectedPresetName]
-            end
-
-            presetIOBox:SetText(Addon:SerializePreset(sourcePreset))
-            presetIOBox:HighlightText()
-            presetIOBox:SetFocus()
-        end)
-
-        local importPresetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        importPresetButton:SetSize(52, 22)
-        importPresetButton:SetPoint("LEFT", exportPresetButton, "RIGHT", 4, 0)
-        importPresetButton:SetText("Import")
-        importPresetButton:SetScript("OnClick", function()
-            local importedPreset = Addon:DeserializePreset(presetIOBox:GetText())
-
-            if importedPreset then
-                Addon:ApplyPresetData(importedPreset, nil)
-                selectedPresetName = nil
-                RefreshPresetDropdownText()
-            end
-        end)
-
-        local dropdownLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        dropdownLabel:SetPoint("TOPLEFT", presetIOBox, "BOTTOMLEFT", -20, -24)
-        dropdownLabel:SetText("Cooldown font")
-
-        local fontSelectorButton = CreateFontSelector(frame, dropdownLabel)
-
-        local fontStyleLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        fontStyleLabel:SetPoint("TOPLEFT", fontSelectorButton, "BOTTOMLEFT", 0, -24)
-        fontStyleLabel:SetText("Cooldown font format")
-
-        local fontStyleDropdown = CreateFrame("Frame", addonName .. "FontStyleDropdown", frame, "UIDropDownMenuTemplate")
-        fontStyleDropdown:SetPoint("TOPLEFT", fontStyleLabel, "BOTTOMLEFT", -16, -4)
-
-        UIDropDownMenu_SetWidth(fontStyleDropdown, 180)
-        UIDropDownMenu_Initialize(fontStyleDropdown, function()
-            for _, styleKey in ipairs(Addon.fontStyleOrder) do
-                local styleData = Addon.fontStyles[styleKey]
-
-                if styleData then
-                    local info = UIDropDownMenu_CreateInfo()
-                    info.text = styleData.label
-                    info.checked = (Addon.db.fontStyle == styleKey)
-                    info.func = function()
-                        UIDropDownMenu_SetSelectedName(fontStyleDropdown, styleData.label)
-                        Addon:SetFontStyle(styleKey)
-                    end
-                    UIDropDownMenu_AddButton(info)
-                end
-            end
-        end)
-        UIDropDownMenu_SetSelectedName(fontStyleDropdown, GetFontStyleLabel(Addon.db.fontStyle or Addon.defaults.fontStyle))
-
-        local anchorLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        anchorLabel:SetPoint("TOPLEFT", fontStyleDropdown, "BOTTOMLEFT", 16, -24)
-        anchorLabel:SetText("Cooldown anchor")
-
-        local anchorDropdown = CreateFrame("Frame", addonName .. "AnchorDropdown", frame, "UIDropDownMenuTemplate")
-        anchorDropdown:SetPoint("TOPLEFT", anchorLabel, "BOTTOMLEFT", -16, -4)
-
-        UIDropDownMenu_SetWidth(anchorDropdown, 140)
-        UIDropDownMenu_Initialize(anchorDropdown, function()
-            for _, anchor in ipairs({ "top", "center", "bottom" }) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = anchorLabels[anchor]
-                info.checked = (Addon.db.anchor == anchor)
-                info.func = function()
-                    UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[anchor])
-                    Addon:SetAnchor(anchor)
-                end
-                UIDropDownMenu_AddButton(info)
-            end
-        end)
-        UIDropDownMenu_SetSelectedName(anchorDropdown, anchorLabels[Addon.db.anchor] or anchorLabels.center)
-
-        local slider = CreateFrame("Slider", addonName .. "SizeSlider", frame, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", anchorDropdown, "BOTTOMLEFT", 20, -28)
-        slider:SetWidth(280)
-        slider:SetMinMaxValues(8, 48)
-        slider:SetValueStep(1)
-        slider:SetObeyStepOnDrag(true)
-        slider:SetValue(Addon.db.fontSize)
-
-        _G[slider:GetName() .. "Low"]:SetText("8")
-        _G[slider:GetName() .. "High"]:SetText("48")
-        _G[slider:GetName() .. "Text"]:SetText("Cooldown font size: " .. Addon.db.fontSize)
-
-        slider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[slider:GetName() .. "Text"]:SetText("Cooldown font size: " .. rounded)
-            Addon:SetFontSize(rounded)
-        end)
-
-        local offsetXSlider = CreateFrame("Slider", addonName .. "OffsetXSlider", frame, "OptionsSliderTemplate")
-        offsetXSlider:SetPoint("TOPLEFT", slider, "BOTTOMLEFT", 0, -40)
-        offsetXSlider:SetWidth(280)
-        offsetXSlider:SetMinMaxValues(-10, 10)
-        offsetXSlider:SetValueStep(1)
-        offsetXSlider:SetObeyStepOnDrag(true)
-        offsetXSlider:SetValue(Addon.db.offsetX or 0)
-
-        _G[offsetXSlider:GetName() .. "Low"]:SetText("-10")
-        _G[offsetXSlider:GetName() .. "High"]:SetText("10")
-        _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. (Addon.db.offsetX or 0) .. "px")
-
-        offsetXSlider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[offsetXSlider:GetName() .. "Text"]:SetText("Cooldown X offset: " .. rounded .. "px")
-            Addon:SetOffsets(rounded, Addon.db.offsetY or 0)
-        end)
-
-        local offsetYSlider = CreateFrame("Slider", addonName .. "OffsetYSlider", frame, "OptionsSliderTemplate")
-        offsetYSlider:SetPoint("TOPLEFT", offsetXSlider, "BOTTOMLEFT", 0, -28)
-        offsetYSlider:SetWidth(280)
-        offsetYSlider:SetMinMaxValues(-10, 10)
-        offsetYSlider:SetValueStep(1)
-        offsetYSlider:SetObeyStepOnDrag(true)
-        offsetYSlider:SetValue(Addon.db.offsetY or 0)
-
-        _G[offsetYSlider:GetName() .. "Low"]:SetText("-10")
-        _G[offsetYSlider:GetName() .. "High"]:SetText("10")
-        _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. (Addon.db.offsetY or 0) .. "px")
-
-        offsetYSlider:SetScript("OnValueChanged", function(_, value)
-            local rounded = math.floor(value + 0.5)
-            _G[offsetYSlider:GetName() .. "Text"]:SetText("Cooldown Y offset: " .. rounded .. "px")
-            Addon:SetOffsets(Addon.db.offsetX or 0, rounded)
-        end)
-
-        local refreshButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-        refreshButton:SetSize(140, 24)
-        refreshButton:SetPoint("TOPLEFT", offsetYSlider, "BOTTOMLEFT", -8, -30)
-        refreshButton:SetText("Refresh Cooldowns")
-        refreshButton:SetScript("OnClick", function()
-            Addon:RefreshAllCooldowns()
-        end)
-    end)
-
     self.optionsPanel = panel
 
-    if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
-        local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name, panel.name)
-        Settings.RegisterAddOnCategory(category)
-        self.settingsCategoryID = category:GetID()
-    elseif InterfaceOptions_AddCategory then
-        InterfaceOptions_AddCategory(panel)
-    end
+    local controls
 
-    SLASH_MIDNIGHTCC1 = "/midnightcc"
-    SlashCmdList["MIDNIGHTCC"] = function()
-        if Settings and Settings.OpenToCategory and Addon.settingsCategoryID then
-            Settings.OpenToCategory(Addon.settingsCategoryID)
+    local function RefreshControls()
+        if not controls then
             return
         end
 
-        if InterfaceOptionsFrame_OpenToCategory then
-            InterfaceOptionsFrame_OpenToCategory(panel)
-            InterfaceOptionsFrame_OpenToCategory(panel)
+        controls.size:SetValue(Addon.db.fontSize)
+        controls.offsetX:SetValue(Addon.db.offsetX)
+        controls.offsetY:SetValue(Addon.db.offsetY)
+        controls.showNumbers:SetChecked(Addon.db.showNumbers)
+
+        controls.validateSelection()
+
+        -- Don't rebuild a menu the user is clicking in; Blizzard updates its
+        -- text itself once the click has been handled.
+        for _, dropdown in ipairs({ controls.font, controls.style, controls.anchor, controls.presets }) do
+            if not dropdown:IsMenuOpen() then
+                dropdown:GenerateMenu()
+            end
+        end
+
+        controls.preview()
+    end
+
+    panel:SetScript("OnShow", function(frame)
+        if not controls then
+            local title = frame:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+            title:SetPoint("TOPLEFT", LEFT_X, -16)
+            title:SetText("MidnightCC |cff808080v" .. Addon.version .. "|r")
+
+            local subtitle = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
+            subtitle:SetText("Restyles the countdown numbers on your action bars. Cooldown values are never read or compared.")
+
+            controls = BuildAppearanceColumn(frame, subtitle)
+
+            local presetControls = BuildPresetColumn(frame, subtitle, RefreshControls)
+            for key, value in pairs(presetControls) do
+                controls[key] = value
+            end
+
+            local preview = BuildPreview(frame, controls)
+            preview:SetPoint("TOPLEFT", controls.io, "BOTTOMLEFT", -6, -110)
+
+            local previewLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+            previewLabel:SetPoint("BOTTOMLEFT", preview, "TOPLEFT", 0, 6)
+            previewLabel:SetText("Preview")
+
+            local refreshButton = CreateButton(frame, "Refresh Cooldowns", 150, function()
+                Addon:RefreshAllCooldowns()
+            end)
+            refreshButton:SetPoint("TOPLEFT", controls.showNumbers, "BOTTOMLEFT", 4, -16)
+
+            local resetButton = CreateButton(frame, "Reset to Defaults", 150, function()
+                Addon:ResetToDefaults()
+            end)
+            resetButton:SetPoint("LEFT", refreshButton, "RIGHT", 8, 0)
+        end
+
+        RefreshControls()
+    end)
+
+    -- Keep the panel in sync with changes made through presets or slash commands.
+    self.OnSettingsChanged = function()
+        if panel:IsShown() then
+            RefreshControls()
         end
     end
+
+    local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    Settings.RegisterAddOnCategory(category)
+    self.settingsCategoryID = category:GetID()
 end

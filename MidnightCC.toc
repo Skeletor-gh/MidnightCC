@@ -1,13 +1,14 @@
-## Interface: 120100
+## Interface: 120105, 120107
 ## Title: MidnightCC
-## Notes: Reskin cooldown text on action bars without comparing cooldown values.
+## Notes: Restyle the countdown numbers on your action bars (font, size, outline, position) without touching cooldown values.
 ## Author: Skeletor-gh
-## Version: 1.2
+## Version: 1.3.0
 ## SavedVariables: MidnightCCDB
 ## OptionalDeps: LibSharedMedia-3.0
 ## IconTexture: Interface\AddOns\MidnightCC\icon
-## X-Category: Skeletor
+## AddonCompartmentFunc: MidnightCC_OnAddonCompartmentClick
 ## Category: Skeletor
+## X-Website: https://github.com/Skeletor-gh/MidnightCC
 
 MidnightCC.lua
 Options.lua

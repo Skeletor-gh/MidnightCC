@@ -1,9 +1,26 @@
-local addonName = ...
-local strmatch = string.match
+-- MidnightCC: reskins the countdown numbers on action-bar cooldowns.
+-- Only font, style and position are changed. Cooldown values are never read,
+-- compared or used for logic, so the addon stays clear of Midnight's secret values.
 
-MidnightCC = CreateFrame("Frame", addonName .. "Frame")
+local addonName = ...
+
+MidnightCC = MidnightCC or {}
 
 local Addon = MidnightCC
+Addon.name = addonName
+Addon.version = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(addonName, "Version") or "dev"
+
+local strmatch = string.match
+local floor, max, min = math.floor, math.max, math.min
+
+---------------------------------------------------------------------------
+-- Configuration tables
+---------------------------------------------------------------------------
+
+Addon.limits = {
+    fontSize = { min = 8, max = 48 },
+    offset = { min = -10, max = 10 },
+}
 
 Addon.defaults = {
     fontName = "Friz Quadrata TT",
@@ -12,47 +29,25 @@ Addon.defaults = {
     anchor = "center",
     offsetX = 0,
     offsetY = 0,
+    showNumbers = true,
 }
 
 Addon.fontStyles = {
-    normal = {
-        label = "Normal",
-        flags = "",
-        shadow = false,
-    },
-    outline = {
-        label = "Outline",
-        flags = "OUTLINE",
-        shadow = false,
-    },
-    shadow = {
-        label = "Shadow",
-        flags = "",
-        shadow = true,
-    },
-    shadowOutline = {
-        label = "Shadow + Outline",
-        flags = "OUTLINE",
-        shadow = true,
-    },
+    normal = { label = "Normal", flags = "", shadow = false },
+    outline = { label = "Outline", flags = "OUTLINE", shadow = false },
+    thickOutline = { label = "Thick Outline", flags = "THICKOUTLINE", shadow = false },
+    shadow = { label = "Shadow", flags = "", shadow = true },
+    shadowOutline = { label = "Shadow + Outline", flags = "OUTLINE", shadow = true },
 }
 
-Addon.fontStyleOrder = {
-    "normal",
-    "outline",
-    "shadow",
-    "shadowOutline",
-}
+Addon.fontStyleOrder = { "normal", "outline", "thickOutline", "shadow", "shadowOutline" }
 
 Addon.availableFonts = {
     ["Friz Quadrata TT"] = "Fonts\\FRIZQT__.TTF",
     ["Arial Narrow"] = "Fonts\\ARIALN.TTF",
     ["Morpheus"] = "Fonts\\MORPHEUS.TTF",
-    ["Skurri"] = "Fonts\\skurri.ttf",
+    ["Skurri"] = "Fonts\\SKURRI.TTF",
 }
-
-Addon.cooldowns = setmetatable({}, { __mode = "k" })
-Addon.scanThrottleSeconds = 0.2
 
 Addon.anchorPoints = {
     top = "TOP",
@@ -60,130 +55,68 @@ Addon.anchorPoints = {
     bottom = "BOTTOM",
 }
 
+Addon.anchorLabels = {
+    top = "Top",
+    center = "Center",
+    bottom = "Bottom",
+}
+
+Addon.anchorOrder = { "top", "center", "bottom" }
+
+-- Fields that make up a preset, and the type each one is stored as.
 Addon.presetFields = {
-    "fontName",
-    "fontSize",
-    "fontStyle",
-    "anchor",
-    "offsetX",
-    "offsetY",
+    { key = "fontName", kind = "string" },
+    { key = "fontSize", kind = "number" },
+    { key = "fontStyle", kind = "string" },
+    { key = "anchor", kind = "string" },
+    { key = "offsetX", kind = "number" },
+    { key = "offsetY", kind = "number" },
+    { key = "showNumbers", kind = "boolean" },
 }
 
+Addon.scanThrottleSeconds = 0.2
 
-local actionButtonNamePatterns = {
-    "^ActionButton%d+$",
-    "^MultiBarBottomLeftButton%d+$",
-    "^MultiBarBottomRightButton%d+$",
-    "^MultiBarRightButton%d+$",
-    "^MultiBarLeftButton%d+$",
-    "^MultiBar5Button%d+$",
-    "^MultiBar6Button%d+$",
-    "^MultiBar7Button%d+$",
-    "^PetActionButton%d+$",
-    "^StanceButton%d+$",
-    "^PossessButton%d+$",
-    "^OverrideActionBarButton%d+$",
-    "^ZoneAbilityFrameSpellButton$",
-    "^ExtraActionButton%d+$",
-}
+-- Cooldown frames we style, frames we've ruled out, and which style revision
+-- each tracked cooldown currently has. All weak-keyed so pooled frames can be collected.
+Addon.cooldowns = setmetatable({}, { __mode = "k" })
+Addon.rejected = setmetatable({}, { __mode = "k" })
+Addon.styled = setmetatable({}, { __mode = "k" })
+Addon.styleRevision = 1
 
-local blockedFrameNamePatterns = {
-    "^NamePlate",
-    "NamePlate",
-}
+---------------------------------------------------------------------------
+-- Generic helpers
+---------------------------------------------------------------------------
 
-local function CanMatchFrameName(frameName)
-    if type(frameName) ~= "string" then
-        return false
+local function IsSecret(value)
+    if issecretvalue and issecretvalue(value) then
+        return true
     end
 
-    if issecret and issecret(frameName) then
-        return false
+    if canaccessvalue and not canaccessvalue(value) then
+        return true
     end
 
-    return true
+    return false
 end
 
-local function SafeCall(frame, methodName, ...)
-    if not frame then
+local function SafeCall(object, methodName, ...)
+    if type(object) ~= "table" then
         return nil
     end
 
-    local method = frame[methodName]
+    local method = object[methodName]
 
     if type(method) ~= "function" then
         return nil
     end
 
-    local ok, result = pcall(method, frame, ...)
+    local ok, result = pcall(method, object, ...)
 
-    if not ok then
+    if not ok or IsSecret(result) then
         return nil
     end
 
     return result
-end
-
-local function IsBlockedFrameName(frameName)
-    if not CanMatchFrameName(frameName) then
-        return false
-    end
-
-    for _, pattern in ipairs(blockedFrameNamePatterns) do
-        if strmatch(frameName, pattern) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function IsBlockedCooldownFrame(frame)
-    local current = frame
-
-    while current do
-        if SafeCall(current, "IsForbidden") then
-            return true
-        end
-
-        local currentName = SafeCall(current, "GetName")
-
-        if IsBlockedFrameName(currentName) then
-            return true
-        end
-
-        current = SafeCall(current, "GetParent")
-    end
-
-    return false
-end
-
-local function IsNamedActionButton(frame)
-    if not frame or IsBlockedCooldownFrame(frame) then
-        return false
-    end
-
-    local frameName = SafeCall(frame, "GetName")
-
-    if not CanMatchFrameName(frameName) then
-        return false
-    end
-
-    for _, pattern in ipairs(actionButtonNamePatterns) do
-        if strmatch(frameName, pattern) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function CopyDefaults(target, defaults)
-    for key, value in pairs(defaults) do
-        if target[key] == nil then
-            target[key] = value
-        end
-    end
 end
 
 local function Trim(value)
@@ -200,220 +133,154 @@ local function Trim(value)
     return trimmed
 end
 
-local function EncodePresetValue(value)
-    return tostring(value):gsub("([^%w%-_%.~])", function(char)
-        return string.format("%%%02X", string.byte(char))
+local function ClampNumber(value, minValue, maxValue, fallback)
+    local number = tonumber(value)
+
+    if not number then
+        return fallback
+    end
+
+    number = floor(number + 0.5)
+    return max(minValue, min(maxValue, number))
+end
+
+Addon.Trim = Trim
+Addon.ClampNumber = ClampNumber
+
+---------------------------------------------------------------------------
+-- Action-bar cooldown detection
+---------------------------------------------------------------------------
+
+local actionButtonNamePatterns = {
+    "^ActionButton%d+$",
+    "^MultiBarBottomLeftButton%d+$",
+    "^MultiBarBottomRightButton%d+$",
+    "^MultiBarRightButton%d+$",
+    "^MultiBarLeftButton%d+$",
+    "^MultiBar%dButton%d+$",
+    "^PetActionButton%d+$",
+    "^StanceButton%d+$",
+    "^PossessButton%d+$",
+    "^OverrideActionBarButton%d+$",
+    "^ExtraActionButton%d+$",
+    "^ZoneAbilityFrameSpellButton",
+}
+
+local function GetMatchableName(frame)
+    local name = SafeCall(frame, "GetName")
+
+    if type(name) ~= "string" then
+        return nil
+    end
+
+    return name
+end
+
+local function MatchesAny(name, patterns)
+    for index = 1, #patterns do
+        if strmatch(name, patterns[index]) then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- Nameplates and forbidden frames are off limits: their cooldowns can carry
+-- secret values and touching them is what caused taint in early 12.0 builds.
+local function IsInBlockedTree(frame)
+    local current = frame
+
+    while current do
+        if SafeCall(current, "IsForbidden") then
+            return true
+        end
+
+        local name = GetMatchableName(current)
+
+        if name and strmatch(name, "NamePlate") then
+            return true
+        end
+
+        current = SafeCall(current, "GetParent")
+    end
+
+    return false
+end
+
+local function IsActionButton(frame)
+    local name = GetMatchableName(frame)
+
+    if name and MatchesAny(name, actionButtonNamePatterns) then
+        return true
+    end
+
+    -- Third-party bars (Bartender4, Dominos, ElvUI, ...) are secure action
+    -- buttons, so they expose an action slot via attributes or a field.
+    if type(SafeCall(frame, "GetAttribute", "action")) == "number" then
+        return true
+    end
+
+    if SafeCall(frame, "GetAttribute", "type") == "action" then
+        return true
+    end
+
+    local ok, action = pcall(function()
+        return frame.action
     end)
+
+    return ok and type(action) == "number" and not IsSecret(action)
 end
 
-local function DecodePresetValue(value)
-    if type(value) ~= "string" then
-        return nil
+function Addon:IsActionBarCooldown(cooldown)
+    if not cooldown or IsInBlockedTree(cooldown) then
+        return false
     end
 
-    return value:gsub("%%(%x%x)", function(hex)
-        return string.char(tonumber(hex, 16))
-    end)
-end
+    local frame = cooldown
 
-local function BuildPresetData(source, defaults)
-    local preset = {}
-
-    for _, field in ipairs(Addon.presetFields) do
-        local value = source[field]
-
-        if value == nil then
-            value = defaults[field]
+    while frame do
+        if IsActionButton(frame) then
+            return true
         end
 
-        preset[field] = value
+        frame = SafeCall(frame, "GetParent")
     end
 
-    if type(source.groupProfiles) == "table" then
-        local copiedProfiles = {}
-
-        for groupName, profileName in pairs(source.groupProfiles) do
-            copiedProfiles[groupName] = profileName
-        end
-
-        preset.groupProfiles = copiedProfiles
-    end
-
-    return preset
+    return false
 end
 
-function Addon:ApplyPresetData(presetData, presetName)
-    if type(presetData) ~= "table" then
-        return false
-    end
-
-    local sanitizedPreset = BuildPresetData(presetData, self.defaults)
-
-    for _, field in ipairs(self.presetFields) do
-        self.db[field] = sanitizedPreset[field]
-    end
-
-    if sanitizedPreset.groupProfiles then
-        self.db.groupProfiles = sanitizedPreset.groupProfiles
-    end
-
-    self.db.activePreset = presetName
-    self:RefreshAllCooldowns()
-    return true
-end
-
-function Addon:SerializePreset(presetData)
-    local source = presetData or self.db
-    local preset = BuildPresetData(source, self.defaults)
-    local segments = {}
-
-    for _, field in ipairs(self.presetFields) do
-        local value = preset[field]
-
-        if value ~= nil then
-            segments[#segments + 1] = field .. "=" .. EncodePresetValue(value)
-        end
-    end
-
-    if type(preset.groupProfiles) == "table" then
-        for groupName, profileName in pairs(preset.groupProfiles) do
-            if type(groupName) == "string" and profileName ~= nil then
-                segments[#segments + 1] = "groupProfiles." .. EncodePresetValue(groupName) .. "=" .. EncodePresetValue(profileName)
-            end
-        end
-    end
-
-    return table.concat(segments, ";")
-end
-
-function Addon:DeserializePreset(serializedPreset)
-    if type(serializedPreset) ~= "string" then
-        return nil
-    end
-
-    local trimmed = Trim(serializedPreset)
-
-    if not trimmed then
-        return nil
-    end
-
-    local preset = {}
-    local hasValue = false
-
-    for segment in trimmed:gmatch("([^;]+)") do
-        local rawKey, rawValue = segment:match("^([^=]+)=(.*)$")
-
-        if rawKey and rawValue then
-            local key = Trim(rawKey)
-            local decodedValue = DecodePresetValue(rawValue)
-
-            if key and decodedValue then
-                if key == "fontName" or key == "fontStyle" or key == "anchor" then
-                    preset[key] = decodedValue
-                    hasValue = true
-                elseif key == "fontSize" or key == "offsetX" or key == "offsetY" then
-                    local numericValue = tonumber(decodedValue)
-
-                    if numericValue then
-                        preset[key] = numericValue
-                        hasValue = true
-                    end
-                else
-                    local groupName = key:match("^groupProfiles%.(.+)$")
-
-                    if groupName then
-                        preset.groupProfiles = preset.groupProfiles or {}
-                        preset.groupProfiles[DecodePresetValue(groupName)] = decodedValue
-                        hasValue = true
-                    end
-                end
-            end
-        end
-    end
-
-    if not hasValue then
-        return nil
-    end
-
-    return BuildPresetData(preset, self.defaults)
-end
-
-function Addon:SavePreset(name)
-    local presetName = Trim(name)
-
-    if not presetName then
-        return false
-    end
-
-    self.db.savedPresets = self.db.savedPresets or {}
-    self.db.savedPresets[presetName] = BuildPresetData(self.db, self.defaults)
-    self.db.activePreset = presetName
-    return true
-end
-
-function Addon:LoadPreset(name)
-    local presetName = Trim(name)
-
-    if not presetName then
-        return false
-    end
-
-    local savedPreset = self.db.savedPresets and self.db.savedPresets[presetName]
-
-    if not savedPreset then
-        return false
-    end
-
-    if type(savedPreset) == "string" then
-        savedPreset = self:DeserializePreset(savedPreset)
-    end
-
-    return self:ApplyPresetData(savedPreset, presetName)
-end
-
-function Addon:DeletePreset(name)
-    local presetName = Trim(name)
-
-    if not presetName or type(self.db.savedPresets) ~= "table" then
-        return false
-    end
-
-    if self.db.savedPresets[presetName] == nil then
-        return false
-    end
-
-    self.db.savedPresets[presetName] = nil
-
-    if self.db.activePreset == presetName then
-        self.db.activePreset = nil
-    end
-
-    return true
-end
+---------------------------------------------------------------------------
+-- Styling
+---------------------------------------------------------------------------
 
 function Addon:GetFontPath()
-    if self.sharedMedia and self.db.fontName then
-        local sharedPath = self.sharedMedia:Fetch("font", self.db.fontName, true)
+    local fontName = self.db.fontName
+
+    if self.sharedMedia and fontName then
+        local sharedPath = self.sharedMedia:Fetch("font", fontName, true)
 
         if sharedPath then
             return sharedPath
         end
     end
 
-    return self.availableFonts[self.db.fontName] or self.availableFonts[self.defaults.fontName] or STANDARD_TEXT_FONT
+    return self.availableFonts[fontName] or self.availableFonts[self.defaults.fontName] or STANDARD_TEXT_FONT
 end
 
 function Addon:GetSortedFontNames()
-    local names = {}
+    local names, seen = {}, {}
 
     for name in pairs(self.availableFonts) do
         names[#names + 1] = name
+        seen[name] = true
     end
 
     if self.sharedMedia then
         for _, name in ipairs(self.sharedMedia:List("font") or {}) do
-            if not self.availableFonts[name] then
+            if not seen[name] then
                 names[#names + 1] = name
+                seen[name] = true
             end
         end
     end
@@ -427,130 +294,174 @@ function Addon:GetAnchorPoint()
 end
 
 function Addon:GetFontStyle()
-    local styleKey = self.db.fontStyle or self.defaults.fontStyle
-    return self.fontStyles[styleKey] or self.fontStyles[self.defaults.fontStyle]
+    return self.fontStyles[self.db.fontStyle] or self.fontStyles[self.defaults.fontStyle]
+end
+
+local function IsFontString(region)
+    return region and SafeCall(region, "GetObjectType") == "FontString"
 end
 
 function Addon:ApplyFontToRegion(region, cooldown)
-    if not region or region:GetObjectType() ~= "FontString" then
-        return
+    local fontStyle = self:GetFontStyle()
+    local size = self.db.fontSize
+
+    -- SetFont fails (returns false or errors) when the file can't be loaded,
+    -- e.g. a SharedMedia font that was uninstalled; fall back to the default font.
+    local ok, success = pcall(region.SetFont, region, self:GetFontPath(), size, fontStyle.flags)
+
+    if not ok or not success then
+        pcall(region.SetFont, region, STANDARD_TEXT_FONT, size, fontStyle.flags)
     end
 
-    local fontStyle = self:GetFontStyle()
-
-    region:SetFont(self:GetFontPath(), self.db.fontSize, fontStyle.flags)
-
-    if fontStyle.shadow and region.SetShadowOffset and region.SetShadowColor then
+    if fontStyle.shadow then
         region:SetShadowOffset(1, -1)
         region:SetShadowColor(0, 0, 0, 1)
-    elseif region.SetShadowOffset and region.SetShadowColor then
+    else
         region:SetShadowOffset(0, 0)
         region:SetShadowColor(0, 0, 0, 0)
     end
 
-    if cooldown and region.SetPoint and region.ClearAllPoints then
-        local anchorPoint = self:GetAnchorPoint()
-        region:ClearAllPoints()
-        region:SetPoint(anchorPoint, cooldown, anchorPoint, self.db.offsetX or 0, self.db.offsetY or 0)
+    local anchorPoint = self:GetAnchorPoint()
+    region:ClearAllPoints()
+    region:SetPoint(anchorPoint, cooldown, anchorPoint, self.db.offsetX or 0, self.db.offsetY or 0)
+end
+
+-- The button's primary cooldown (button.cooldown). Charge and loss-of-control
+-- cooldowns are separate frames that Blizzard deliberately keeps number-less.
+local function GetOwningButton(cooldown)
+    local parent = SafeCall(cooldown, "GetParent")
+
+    if not parent then
+        return nil
+    end
+
+    local ok, mainCooldown = pcall(function()
+        return parent.cooldown
+    end)
+
+    if ok and mainCooldown == cooldown then
+        return parent
+    end
+
+    return nil
+end
+
+function Addon:IsMainCooldown(cooldown)
+    return GetOwningButton(cooldown) ~= nil
+end
+
+local function BlizzardHidesNumbers()
+    return not (C_CVar and C_CVar.GetCVarBool and C_CVar.GetCVarBool("countdownForCooldowns"))
+end
+
+function Addon:UpdateCountdownVisibility(cooldown)
+    if not self.db.showNumbers or not self:IsMainCooldown(cooldown) then
+        return
+    end
+
+    cooldown:SetHideCountdownNumbers(false)
+end
+
+-- Hands countdown visibility back to Blizzard's "Show numbers for cooldowns" option.
+function Addon:RestoreCountdownVisibility()
+    local hide = BlizzardHidesNumbers()
+
+    for cooldown in pairs(self.cooldowns) do
+        if self:IsMainCooldown(cooldown) then
+            cooldown:SetHideCountdownNumbers(hide)
+        end
     end
 end
 
-function Addon:IsActionBarCooldown(cooldown)
-    if not cooldown or IsBlockedCooldownFrame(cooldown) then
+-- Returns true when at least one countdown font string was found and styled.
+function Addon:ApplyToCooldown(cooldown)
+    if not cooldown or not self.db or SafeCall(cooldown, "IsForbidden") then
         return false
     end
 
-    local frame = cooldown
+    self:UpdateCountdownVisibility(cooldown)
 
-    while frame do
-        if IsNamedActionButton(frame) then
-            return true
+    local styledAny = false
+    local regions = { cooldown:GetRegions() }
+
+    for index = 1, #regions do
+        local region = regions[index]
+
+        if IsFontString(region) then
+            self:ApplyFontToRegion(region, cooldown)
+            styledAny = true
         end
-
-        if frame.GetAttribute then
-            local actionSlot = SafeCall(frame, "GetAttribute", "action")
-
-            if type(actionSlot) == "number" then
-                return true
-            end
-
-            if SafeCall(frame, "GetAttribute", "type") == "action" then
-                return true
-            end
-        end
-
-        if type(frame.action) == "number" then
-            return true
-        end
-
-        frame = SafeCall(frame, "GetParent")
     end
 
-    return false
-end
+    local children = { cooldown:GetChildren() }
 
-function Addon:ApplyToCooldown(cooldown)
-    if not cooldown then
-        return
-    end
+    for childIndex = 1, #children do
+        local childRegions = { children[childIndex]:GetRegions() }
 
-    if cooldown.SetHideCountdownNumbers then
-        cooldown:SetHideCountdownNumbers(false)
-    end
+        for index = 1, #childRegions do
+            local region = childRegions[index]
 
-    local regionIndex = 1
-    local region = select(regionIndex, cooldown:GetRegions())
-
-    while region do
-        self:ApplyFontToRegion(region, cooldown)
-        regionIndex = regionIndex + 1
-        region = select(regionIndex, cooldown:GetRegions())
-    end
-
-    local childIndex = 1
-    local child = select(childIndex, cooldown:GetChildren())
-
-    while child do
-        if child.GetObjectType and child:GetObjectType() == "FontString" then
-            self:ApplyFontToRegion(child, cooldown)
-        elseif child.GetRegions then
-            local childRegionIndex = 1
-            local childRegion = select(childRegionIndex, child:GetRegions())
-
-            while childRegion do
-                self:ApplyFontToRegion(childRegion, cooldown)
-                childRegionIndex = childRegionIndex + 1
-                childRegion = select(childRegionIndex, child:GetRegions())
+            if IsFontString(region) then
+                self:ApplyFontToRegion(region, cooldown)
+                styledAny = true
             end
         end
-
-        childIndex = childIndex + 1
-        child = select(childIndex, cooldown:GetChildren())
     end
+
+    -- The countdown font string is created lazily by the client, so only mark
+    -- the cooldown as done once it actually exists.
+    if styledAny then
+        self.styled[cooldown] = self.styleRevision
+    end
+
+    return styledAny
 end
 
 function Addon:RegisterCooldown(cooldown)
-    if not cooldown or self.cooldowns[cooldown] or not self:IsActionBarCooldown(cooldown) then
-        return
+    if not cooldown or self.cooldowns[cooldown] then
+        return self.cooldowns[cooldown] == true
+    end
+
+    if self.rejected[cooldown] then
+        return false
+    end
+
+    if not self:IsActionBarCooldown(cooldown) then
+        self.rejected[cooldown] = true
+        return false
     end
 
     self.cooldowns[cooldown] = true
 
-    if cooldown.HookScript then
-        cooldown:HookScript("OnShow", function(frame)
-            Addon:ApplyToCooldown(frame)
-        end)
+    cooldown:HookScript("OnShow", function(frame)
+        Addon:UpdateCooldown(frame)
+    end)
+
+    return true
+end
+
+-- Cheap entry point used by hooks: styles a cooldown only if it is an action-bar
+-- cooldown that hasn't picked up the current style revision yet.
+function Addon:UpdateCooldown(cooldown)
+    if not self.db or self.styled[cooldown] == self.styleRevision then
+        return
     end
 
-    self:ApplyToCooldown(cooldown)
+    if self:RegisterCooldown(cooldown) then
+        self:ApplyToCooldown(cooldown)
+    end
 end
 
 function Addon:ScanCooldownFrames()
+    -- Frames can be reparented between scans (e.g. bar addons loading late),
+    -- so give previously rejected frames another chance.
+    wipe(self.rejected)
+
     local frame = EnumerateFrames()
 
     while frame do
-        if frame.GetObjectType and frame:GetObjectType() == "Cooldown" and self:IsActionBarCooldown(frame) then
-            self:RegisterCooldown(frame)
+        if SafeCall(frame, "GetObjectType") == "Cooldown" then
+            self:UpdateCooldown(frame)
         end
 
         frame = EnumerateFrames(frame)
@@ -564,27 +475,41 @@ function Addon:RequestCooldownScan()
 
     self.scanQueued = true
 
-    if C_Timer and C_Timer.After then
-        C_Timer.After(self.scanThrottleSeconds, function()
-            Addon.scanQueued = false
-            Addon:ScanCooldownFrames()
-        end)
-        return
-    end
-
-    self.scanQueued = false
-    self:ScanCooldownFrames()
+    C_Timer.After(self.scanThrottleSeconds, function()
+        Addon.scanQueued = false
+        Addon:ScanCooldownFrames()
+    end)
 end
 
-function Addon:ApplyToKnownCooldowns()
+-- Called after any setting change: bumps the style revision and restyles the
+-- cooldowns we already know about, without rescanning the whole UI.
+function Addon:ApplyStyle()
+    self.styleRevision = self.styleRevision + 1
+
+    -- Turning "always show numbers" off (directly or via a preset) hands the
+    -- countdown visibility back to Blizzard's own setting.
+    if self.forcedNumbers and not self.db.showNumbers then
+        self:RestoreCountdownVisibility()
+    end
+
+    self.forcedNumbers = self.db.showNumbers
+
     for cooldown in pairs(self.cooldowns) do
         self:ApplyToCooldown(cooldown)
+    end
+
+    if self.OnSettingsChanged then
+        self:OnSettingsChanged()
     end
 end
 
 function Addon:RefreshAllCooldowns()
+    self.styleRevision = self.styleRevision + 1
     self:ScanCooldownFrames()
-    self:ApplyToKnownCooldowns()
+
+    for cooldown in pairs(self.cooldowns) do
+        self:ApplyToCooldown(cooldown)
+    end
 end
 
 function Addon:HookCooldownAPIs()
@@ -594,70 +519,358 @@ function Addon:HookCooldownAPIs()
 
     self.cooldownHooksInstalled = true
 
-    if CooldownFrame_Set then
-        hooksecurefunc("CooldownFrame_Set", function(cooldown)
-            Addon:RegisterCooldown(cooldown)
-        end)
+    -- Post-hooking the shared Cooldown widget methods catches every action-bar
+    -- cooldown (Blizzard and third-party bars) the moment it starts. Only the
+    -- frame is used; the cooldown arguments, which may be secret, are ignored.
+    local probe = CreateFrame("Cooldown")
+    local methods = getmetatable(probe).__index
+
+    local function OnCooldownSet(cooldown)
+        Addon:UpdateCooldown(cooldown)
     end
 
-    if CooldownFrame_SetDisplayAsPercentage then
-        hooksecurefunc("CooldownFrame_SetDisplayAsPercentage", function(cooldown)
-            Addon:RegisterCooldown(cooldown)
+    for _, methodName in ipairs({
+        "SetCooldown",
+        "SetCooldownDuration",
+        "SetCooldownFromDurationObject",
+        "SetCooldownFromExpirationTime",
+        "SetCooldownUNIX",
+    }) do
+        if type(methods[methodName]) == "function" then
+            hooksecurefunc(methods, methodName, OnCooldownSet)
+        end
+    end
+
+    if CooldownFrame_Set then
+        hooksecurefunc("CooldownFrame_Set", OnCooldownSet)
+    end
+
+    -- Blizzard re-applies its "Show numbers for cooldowns" option whenever that
+    -- setting changes or a button is (re)initialised; keep our override on top.
+    if ActionButton_UpdateCooldownNumberHidden then
+        hooksecurefunc("ActionButton_UpdateCooldownNumberHidden", function(button)
+            local cooldown = button and button.cooldown
+
+            if cooldown and Addon.db and Addon.db.showNumbers and Addon.cooldowns[cooldown] then
+                cooldown:SetHideCountdownNumbers(false)
+            end
         end)
     end
 end
 
-function Addon:InitializeDatabase()
-    MidnightCCDB = MidnightCCDB or {}
-    CopyDefaults(MidnightCCDB, self.defaults)
-    MidnightCCDB.savedPresets = MidnightCCDB.savedPresets or {}
+---------------------------------------------------------------------------
+-- Presets
+---------------------------------------------------------------------------
 
-    if MidnightCCDB.activePreset ~= nil and type(MidnightCCDB.activePreset) ~= "string" then
-        MidnightCCDB.activePreset = nil
+local function EncodePresetValue(value)
+    local encoded = tostring(value):gsub("([^%w%-_%.~])", function(char)
+        return string.format("%%%02X", string.byte(char))
+    end)
+
+    return encoded
+end
+
+local function DecodePresetValue(value)
+    if type(value) ~= "string" then
+        return nil
     end
 
-    self.db = MidnightCCDB
+    local decoded = value:gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end)
+
+    return decoded
+end
+
+local function CoerceField(kind, value)
+    if kind == "number" then
+        return tonumber(value)
+    elseif kind == "boolean" then
+        if value == true or value == "true" or value == "1" then
+            return true
+        elseif value == false or value == "false" or value == "0" then
+            return false
+        end
+
+        return nil
+    elseif type(value) == "string" then
+        return value
+    end
+
+    return nil
+end
+
+-- Builds a clean, fully populated preset from any table (db, saved preset or import).
+function Addon:SanitizePreset(source)
+    local defaults = self.defaults
+    local preset = {}
+
+    source = type(source) == "table" and source or {}
+
+    for _, field in ipairs(self.presetFields) do
+        local value = CoerceField(field.kind, source[field.key])
+
+        if value == nil then
+            value = defaults[field.key]
+        end
+
+        preset[field.key] = value
+    end
+
+    preset.fontSize = ClampNumber(preset.fontSize, self.limits.fontSize.min, self.limits.fontSize.max, defaults.fontSize)
+    preset.offsetX = ClampNumber(preset.offsetX, self.limits.offset.min, self.limits.offset.max, defaults.offsetX)
+    preset.offsetY = ClampNumber(preset.offsetY, self.limits.offset.min, self.limits.offset.max, defaults.offsetY)
+
+    if not self.fontStyles[preset.fontStyle] then
+        preset.fontStyle = defaults.fontStyle
+    end
+
+    if not self.anchorPoints[preset.anchor] then
+        preset.anchor = defaults.anchor
+    end
+
+    return preset
+end
+
+function Addon:ApplyPresetData(presetData, presetName)
+    if type(presetData) ~= "table" then
+        return false
+    end
+
+    local preset = self:SanitizePreset(presetData)
+
+    for _, field in ipairs(self.presetFields) do
+        self.db[field.key] = preset[field.key]
+    end
+
+    self.db.activePreset = presetName
+    self:ApplyStyle()
+    return true
+end
+
+function Addon:SerializePreset(presetData)
+    local preset = self:SanitizePreset(presetData or self.db)
+    local segments = {}
+
+    for _, field in ipairs(self.presetFields) do
+        segments[#segments + 1] = field.key .. "=" .. EncodePresetValue(preset[field.key])
+    end
+
+    return table.concat(segments, ";")
+end
+
+function Addon:DeserializePreset(serializedPreset)
+    local trimmed = Trim(serializedPreset)
+
+    if not trimmed then
+        return nil
+    end
+
+    local knownFields = {}
+
+    for _, field in ipairs(self.presetFields) do
+        knownFields[field.key] = field.kind
+    end
+
+    local raw = {}
+    local hasValue = false
+
+    for segment in trimmed:gmatch("([^;]+)") do
+        local rawKey, rawValue = segment:match("^([^=]+)=(.*)$")
+        local key = Trim(rawKey)
+        local kind = key and knownFields[key]
+
+        if kind then
+            local value = CoerceField(kind, DecodePresetValue(rawValue))
+
+            if value ~= nil then
+                raw[key] = value
+                hasValue = true
+            end
+        end
+    end
+
+    if not hasValue then
+        return nil
+    end
+
+    return self:SanitizePreset(raw)
+end
+
+function Addon:SavePreset(name)
+    local presetName = Trim(name)
+
+    if not presetName then
+        return nil
+    end
+
+    self.db.savedPresets[presetName] = self:SanitizePreset(self.db)
+    self.db.activePreset = presetName
+    return presetName
+end
+
+function Addon:GetPreset(name)
+    local presetName = Trim(name)
+    local savedPreset = presetName and self.db.savedPresets[presetName]
+
+    -- Very early versions stored presets as serialized strings.
+    if type(savedPreset) == "string" then
+        savedPreset = self:DeserializePreset(savedPreset)
+    end
+
+    return savedPreset, presetName
+end
+
+function Addon:LoadPreset(name)
+    local preset, presetName = self:GetPreset(name)
+
+    if not preset then
+        return false
+    end
+
+    return self:ApplyPresetData(preset, presetName)
+end
+
+function Addon:DeletePreset(name)
+    local presetName = Trim(name)
+
+    if not presetName or self.db.savedPresets[presetName] == nil then
+        return false
+    end
+
+    self.db.savedPresets[presetName] = nil
+
+    if self.db.activePreset == presetName then
+        self.db.activePreset = nil
+    end
+
+    return true
+end
+
+function Addon:GetSortedPresetNames()
+    local names = {}
+
+    for presetName in pairs(self.db.savedPresets) do
+        names[#names + 1] = presetName
+    end
+
+    table.sort(names)
+    return names
+end
+
+function Addon:ResetToDefaults()
+    self:ApplyPresetData(self.defaults, nil)
+end
+
+---------------------------------------------------------------------------
+-- Setters (used by the options panel and presets)
+---------------------------------------------------------------------------
+
+function Addon:IsKnownFont(fontName)
+    if type(fontName) ~= "string" then
+        return false
+    end
+
+    if self.availableFonts[fontName] then
+        return true
+    end
+
+    return self.sharedMedia and self.sharedMedia:Fetch("font", fontName, true) ~= nil or false
+end
+
+local function SetValue(key, value)
+    if Addon.db[key] == value then
+        return
+    end
+
+    Addon.db[key] = value
+    Addon.db.activePreset = nil
+    Addon:ApplyStyle()
 end
 
 function Addon:SetFontName(fontName)
-    local isCustomFont = self.availableFonts[fontName]
-
-    if not isCustomFont and self.sharedMedia then
-        isCustomFont = self.sharedMedia:Fetch("font", fontName, true)
+    if self:IsKnownFont(fontName) then
+        SetValue("fontName", fontName)
     end
-
-    if not isCustomFont then
-        return
-    end
-
-    self.db.fontName = fontName
-    self:RefreshAllCooldowns()
 end
 
 function Addon:SetAnchor(anchor)
-    if not self.anchorPoints[anchor] then
-        return
+    if self.anchorPoints[anchor] then
+        SetValue("anchor", anchor)
     end
-
-    self.db.anchor = anchor
-    self:RefreshAllCooldowns()
 end
 
 function Addon:SetFontStyle(styleKey)
-    if not self.fontStyles[styleKey] then
-        return
+    if self.fontStyles[styleKey] then
+        SetValue("fontStyle", styleKey)
+    end
+end
+
+function Addon:SetFontSize(fontSize)
+    if tonumber(fontSize) then
+        SetValue("fontSize", ClampNumber(fontSize, self.limits.fontSize.min, self.limits.fontSize.max, self.defaults.fontSize))
+    end
+end
+
+function Addon:SetOffsetX(offsetX)
+    if tonumber(offsetX) then
+        SetValue("offsetX", ClampNumber(offsetX, self.limits.offset.min, self.limits.offset.max, 0))
+    end
+end
+
+function Addon:SetOffsetY(offsetY)
+    if tonumber(offsetY) then
+        SetValue("offsetY", ClampNumber(offsetY, self.limits.offset.min, self.limits.offset.max, 0))
+    end
+end
+
+-- Kept for backwards compatibility with anything calling the old API.
+function Addon:SetOffsets(offsetX, offsetY)
+    self:SetOffsetX(offsetX)
+    self:SetOffsetY(offsetY)
+end
+
+function Addon:SetShowNumbers(enabled)
+    SetValue("showNumbers", enabled and true or false)
+end
+
+---------------------------------------------------------------------------
+-- Initialisation
+---------------------------------------------------------------------------
+
+function Addon:InitializeDatabase()
+    local db = type(MidnightCCDB) == "table" and MidnightCCDB or {}
+
+    if type(db.savedPresets) ~= "table" then
+        db.savedPresets = {}
     end
 
-    self.db.fontStyle = styleKey
-    self:RefreshAllCooldowns()
+    -- Normalise stored settings (also fills in options added in newer versions).
+    local preset = self:SanitizePreset(db)
+
+    for _, field in ipairs(self.presetFields) do
+        db[field.key] = preset[field.key]
+    end
+
+    if db.activePreset ~= nil and (type(db.activePreset) ~= "string" or db.savedPresets[db.activePreset] == nil) then
+        db.activePreset = nil
+    end
+
+    -- groupProfiles was written by 1.2.x but never used.
+    db.groupProfiles = nil
+    db.dbVersion = 2
+
+    MidnightCCDB = db
+    self.db = db
+    self.forcedNumbers = db.showNumbers
 end
 
 function Addon:InitializeSharedMedia()
-    if not LibStub then
+    if self.sharedMedia then
         return
     end
 
-    local sharedMedia = LibStub("LibSharedMedia-3.0", true)
+    local sharedMedia = LibStub and LibStub("LibSharedMedia-3.0", true)
 
     if not sharedMedia then
         return
@@ -665,58 +878,75 @@ function Addon:InitializeSharedMedia()
 
     self.sharedMedia = sharedMedia
 
-    if sharedMedia.RegisterCallback then
-        sharedMedia.RegisterCallback(self, "LibSharedMedia_Registered", function()
-            Addon:RefreshAllCooldowns()
-        end)
+    -- Restyle only when the font we're using becomes available (e.g. a media
+    -- pack that loads after us), not for every piece of media registered.
+    sharedMedia.RegisterCallback(self, "LibSharedMedia_Registered", function(_, mediaType, key)
+        if mediaType == "font" and Addon.db and key == Addon.db.fontName then
+            Addon:ApplyStyle()
+        end
+    end)
+end
+
+function Addon:OpenOptions()
+    if Settings and Settings.OpenToCategory and self.settingsCategoryID then
+        Settings.OpenToCategory(self.settingsCategoryID)
     end
 end
 
-function Addon:SetFontSize(fontSize)
-    local size = tonumber(fontSize)
-
-    if not size then
-        return
-    end
-
-    size = math.floor(size + 0.5)
-    size = math.max(8, math.min(48, size))
-
-    self.db.fontSize = size
-    self:RefreshAllCooldowns()
+function Addon:Print(message)
+    print("|cff8f7cffMidnightCC|r: " .. message)
 end
 
-function Addon:SetOffsets(offsetX, offsetY)
-    local x = tonumber(offsetX)
-    local y = tonumber(offsetY)
+local function HandleSlashCommand(input)
+    local command = (Trim(input) or ""):lower()
 
-    if not x or not y then
-        return
+    if command == "" or command == "config" or command == "options" then
+        Addon:OpenOptions()
+    elseif command == "refresh" then
+        Addon:RefreshAllCooldowns()
+        Addon:Print("Cooldown text refreshed.")
+    elseif command == "reset" then
+        Addon:ResetToDefaults()
+        Addon:Print("Settings reset to defaults.")
+    else
+        Addon:Print("v" .. Addon.version .. " commands:")
+        print("  /mcc - open the options panel")
+        print("  /mcc refresh - rescan and restyle all action-bar cooldowns")
+        print("  /mcc reset - restore default settings")
     end
-
-    x = math.floor(x + 0.5)
-    y = math.floor(y + 0.5)
-
-    x = math.max(-10, math.min(10, x))
-    y = math.max(-10, math.min(10, y))
-
-    self.db.offsetX = x
-    self.db.offsetY = y
-    self:RefreshAllCooldowns()
 end
 
-Addon:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then
+function MidnightCC_OnAddonCompartmentClick()
+    Addon:OpenOptions()
+end
+
+local eventFrame = CreateFrame("Frame", addonName .. "EventFrame")
+Addon.eventFrame = eventFrame
+
+eventFrame:SetScript("OnEvent", function(_, event, ...)
+    if event == "ADDON_LOADED" then
+        if ... ~= addonName then
+            return
+        end
+
+        eventFrame:UnregisterEvent("ADDON_LOADED")
         Addon:InitializeDatabase()
         Addon:InitializeSharedMedia()
         Addon:CreateOptionsPanel()
-        Addon:RefreshAllCooldowns()
         Addon:HookCooldownAPIs()
-        return
-    end
 
-    Addon:RequestCooldownScan()
+        SLASH_MIDNIGHTCC1 = "/midnightcc"
+        SLASH_MIDNIGHTCC2 = "/mcc"
+        SlashCmdList.MIDNIGHTCC = HandleSlashCommand
+    elseif event == "PLAYER_LOGIN" then
+        -- LibSharedMedia may be embedded in an addon that loaded after us.
+        Addon:InitializeSharedMedia()
+        Addon:RefreshAllCooldowns()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        Addon:RequestCooldownScan()
+    end
 end)
 
-Addon:RegisterEvent("PLAYER_LOGIN")
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("ADDON_LOADED")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
